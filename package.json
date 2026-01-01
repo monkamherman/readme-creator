@@ -1,0 +1,21 @@
+{
+  "name": "enatega-multivendor-orchestrator",
+  "version": "1.0.0",
+  "description": "Root orchestrator to launch all Enatega Multivendor projects",
+  "scripts": {
+    "start": "npx concurrently --kill-others-on-fail -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgCyan.bold,bgYellow.bold\" \"npm:start:admin\" \"npm:start:web\" \"npm:start:app\" \"npm:start:rider\" \"npm:start:store\"",
+    "start:admin": "cd enatega-multivendor-admin && npm run dev -- -p 3000",
+    "start:web": "cd enatega-multivendor-web && npm run dev -- -p 3001",
+    "start:app": "cd enatega-multivendor-app && npm run start",
+    "start:rider": "cd enatega-multivendor-rider && npm run start",
+    "start:store": "cd enatega-multivendor-store && npm run start",
+    "install:all": "npm install && cd enatega-multivendor-admin && npm install && cd ../enatega-multivendor-web && npm install && cd ../enatega-multivendor-app && npm install && cd ../enatega-multivendor-rider && npm install && cd ../enatega-multivendor-store && npm install"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "global": "^4.4.0",
+    "ngrok": "^5.0.0-beta.2"
+  }
+}

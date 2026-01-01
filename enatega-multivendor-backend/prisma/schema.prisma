@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+type Location {
+  coordinates Float[]
+}
+
+type OpeningTimeTimes {
+  startTime String[]
+  endTime   String[]
+}
+
+type OpeningTime {
+  day   String
+  times OpeningTimeTimes[]
+}
+
+type Variation {
+  id           String   @map("_id") @db.ObjectId
+  title        String
+  price        Float
+  discounted   Float?
+  addons       String[]
+  isOutOfStock Boolean?
+}
+
+type Option {
+  id           String   @map("_id") @db.ObjectId
+  title        String
+  description  String?
+  price        Float
+  isOutOfStock Boolean?
+}
+
+type Addon {
+  id              String   @map("_id") @db.ObjectId
+  title           String
+  description     String?
+  quantityMinimum Int
+  quantityMaximum Int
+  options         Option[]
+}
+
+model Restaurant {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  image         String?
+  logo          String?
+  slug          String        @unique
+  username      String?
+  password      String?
+  phone         String?
+  email         String?
+  shopType      String?
+  address       String?
+  location      Location?
+  deliveryTime  Int?
+  minimumOrder  Float?
+  tax           Float?
+  reviewAverage Float?
+  cuisines      String[]
+  isActive      Boolean       @default(true)
+  isAvailable   Boolean       @default(true)
+  openingTimes  OpeningTime[]
+  categories    Category[]
+  orders        Order[]
+  reviews       Review[]
+  zoneId        String?       @db.ObjectId
+  zone          Zone?         @relation(fields: [zoneId], references: [id])
+}
+
+model Category {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  restaurantId String     @db.ObjectId
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  foods        Food[]
+}
+
+model Food {
+  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  image        String?
+  description  String?
+  subCategory  String?
+  isOutOfStock Boolean     @default(false)
+  variations   Variation[]
+  categoryId   String      @db.ObjectId
+  category     Category    @relation(fields: [categoryId], references: [id])
+}
+
+model User {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  name      String?
+  email     String?   @unique
+  phone     String?
+  password  String?
+  orders    Order[]
+  reviews   Review[]
+  addresses Address[]
+}
+
+model Rider {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  name      String?
+  username  String?
+  password  String?
+  phone     String?
+  available Boolean?
+  location  Location?
+  orders    Order[]
+}
+
+model Order {
+  id              String     @id @default(auto()) @map("_id") @db.ObjectId
+  orderId         String     @unique
+  restaurantId    String     @db.ObjectId
+  restaurant      Restaurant @relation(fields: [restaurantId], references: [id])
+  userId          String     @db.ObjectId
+  user            User       @relation(fields: [userId], references: [id])
+  riderId         String?    @db.ObjectId
+  rider           Rider?     @relation(fields: [riderId], references: [id])
+  items           Json[]
+  deliveryAddress Json?
+  paymentMethod   String?
+  paidAmount      Float?
+  orderAmount     Float?
+  orderStatus     String?
+  paymentStatus   String?
+  tipping         Float?
+  taxationAmount  Float?
+  createdAt       DateTime   @default(now())
+  completionTime  DateTime?
+  preparationTime DateTime?
+  orderDate       DateTime?
+  expectedTime    DateTime?
+  isPickedUp      Boolean?
+  deliveryCharges Float?
+  instructions    String?
+  review          Review?
+}
+
+model Review {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  rating       Int
+  description  String?
+  orderId      String     @unique @db.ObjectId
+  order        Order      @relation(fields: [orderId], references: [id])
+  restaurantId String     @db.ObjectId
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  userId       String     @db.ObjectId
+  user         User       @relation(fields: [userId], references: [id])
+  createdAt    DateTime   @default(now())
+}
+
+model Zone {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  coordinates Json
+  tax         Float?
+  restaurants Restaurant[]
+}
+
+model Address {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  location Location
+  address  String
+  userId   String   @db.ObjectId
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+model Configuration {
+  id             String  @id @default(auto()) @map("_id") @db.ObjectId
+  emailUsername  String?
+  emailPassword  String?
+  currency       String?
+  currencySymbol String?
+  deliveryRate   Float?
+}
