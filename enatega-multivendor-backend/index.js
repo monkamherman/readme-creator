@@ -131,6 +131,38 @@ const typeDefs = `
     isActive: Boolean
   }
 
+  type DeliveryBounds {
+    coordinates: [[[[Float]]]]
+  }
+
+  type RestaurantPreview {
+    _id: ID!
+    orderId: Int
+    orderPrefix: String
+    name: String
+    image: String
+    logo: String
+    slug: String
+    shopType: String
+    address: String
+    location: Location
+    deliveryTime: Int
+    minimumOrder: Float
+    tax: Float
+    rating: Float
+    reviewAverage: Float
+    reviewCount: Int
+    cuisines: [String]
+    isActive: Boolean
+    isAvailable: Boolean
+    openingTimes: [OpeningTime]
+    deliveryBounds: DeliveryBounds
+    zone: Zone
+    distanceInKm: Float
+    isWithinDeliveryZone: Boolean
+    commissionRate: Float
+  }
+
   type Restaurant {
     _id: ID!
     orderId: Int
@@ -167,12 +199,14 @@ const typeDefs = `
     reviewData: ReviewData
     zone: Zone
     owner: Owner
-    deliveryBounds: Location
+    deliveryBounds: DeliveryBounds
     stripeDetailsSubmitted: Boolean
     commissionRate: Float
     notificationToken: String
     enableNotification: Boolean
     restaurantUrl: String
+    distanceInKm: Float
+    isWithinDeliveryZone: Boolean
   }
 
   type Category {
@@ -516,8 +550,8 @@ const typeDefs = `
     # Restaurants
     restaurants: [Restaurant]
     restaurant(id: String): Restaurant
-    nearByRestaurants(latitude: Float, longitude: Float, shopType: String): NearByRestaurantsResult
-    nearByRestaurantsPreview(latitude: Float, longitude: Float, shopType: String): NearByRestaurantsResult
+    nearByRestaurants(latitude: Float!, longitude: Float!, shopType: String, ip: String): NearByRestaurantsResult
+    nearByRestaurantsPreview(latitude: Float!, longitude: Float!, shopType: String, page: Int, limit: Int): NearByRestaurantsResult
     topRatedVendors(latitude: Float!, longitude: Float!): [Restaurant]
     topRatedVendorsPreview(latitude: Float!, longitude: Float!): [Restaurant]
     mostOrderedRestaurants(latitude: Float!, longitude: Float!, shopType: String): [Restaurant]
@@ -576,7 +610,11 @@ const typeDefs = `
   type NearByRestaurantsResult {
     offers: [Offer]
     sections: [Section]
-    restaurants: [Restaurant]
+    restaurants: [RestaurantPreview]
+    totalCount: Int
+    page: Int
+    limit: Int
+    hasMore: Boolean
   }
 
   type Offer {
@@ -900,6 +938,100 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// ============================================
+// FONCTIONS GÉOLOCALISATION
+// ============================================
+
+/**
+ * Calcule la distance en km entre deux points (formule Haversine)
+ */
+const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Rayon de la Terre en km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+/**
+ * Vérifie si un point est dans un polygone (algorithme ray-casting)
+ */
+const isPointInPolygon = (point, polygon) => {
+  if (!polygon || !polygon.length) return false;
+  
+  const [x, y] = point; // [lng, lat]
+  let inside = false;
+  
+  // Gérer les polygones imbriqués (GeoJSON style)
+  const coords = Array.isArray(polygon[0][0]) ? polygon[0] : polygon;
+  
+  for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+    const xi = coords[i][0], yi = coords[i][1];
+    const xj = coords[j][0], yj = coords[j][1];
+    
+    const intersect =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  
+  return inside;
+};
+
+/**
+ * Vérifie si un utilisateur est dans la zone de livraison d'un restaurant
+ */
+const isWithinDeliveryBounds = (userLat, userLng, deliveryBounds) => {
+  if (!deliveryBounds?.coordinates) return false;
+  
+  // deliveryBounds.coordinates est un tableau de polygones
+  const polygons = deliveryBounds.coordinates;
+  
+  // Vérifier chaque polygone
+  for (const polygon of polygons) {
+    if (isPointInPolygon([userLng, userLat], polygon)) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+/**
+ * Enrichit un restaurant avec les infos de distance et zone
+ */
+const enrichRestaurantWithGeoData = (restaurant, userLat, userLng) => {
+  const restLat = restaurant.location?.coordinates?.[1];
+  const restLng = restaurant.location?.coordinates?.[0];
+  
+  let distanceInKm = null;
+  let isWithinDeliveryZone = false;
+  
+  if (restLat && restLng && userLat && userLng) {
+    distanceInKm = calculateHaversineDistance(userLat, userLng, restLat, restLng);
+    distanceInKm = Math.round(distanceInKm * 100) / 100; // Arrondir à 2 décimales
+  }
+  
+  // Vérifier si dans la zone de livraison
+  if (restaurant.deliveryBounds) {
+    isWithinDeliveryZone = isWithinDeliveryBounds(userLat, userLng, restaurant.deliveryBounds);
+  }
+  
+  return {
+    ...restaurant,
+    _id: restaurant.id,
+    distanceInKm,
+    isWithinDeliveryZone,
+    rating: restaurant.reviewAverage || 0,
+    reviewCount: restaurant.reviews?.length || 0
+  };
+};
+
 // Resolvers
 const resolvers = {
   Query: {
@@ -921,13 +1053,31 @@ const resolvers = {
           zone: true
         }
       });
-      return restaurant;
+      
+      if (!restaurant) return null;
+      
+      return {
+        ...restaurant,
+        _id: restaurant.id,
+        rating: restaurant.reviewAverage || 0,
+        reviewCount: restaurant.reviews?.length || 0,
+        reviewData: {
+          reviews: restaurant.reviews,
+          ratings: restaurant.reviewAverage || 0,
+          total: restaurant.reviews?.length || 0
+        }
+      };
     },
     
-    // Near by restaurants (placeholder - à implémenter avec géoloc)
-    nearByRestaurants: async (_, { latitude, longitude, shopType }) => {
+    // Near by restaurants avec géolocalisation réelle
+    nearByRestaurants: async (_, { latitude, longitude, shopType, ip }) => {
+      console.log(`nearByRestaurants: lat=${latitude}, lng=${longitude}, shopType=${shopType}`);
+      
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
       const restaurants = await prisma.restaurant.findMany({
-        where: shopType ? { shopType, isActive: true } : { isActive: true },
+        where: whereClause,
         include: {
           categories: {
             include: {
@@ -939,57 +1089,202 @@ const resolvers = {
         }
       });
       
-      return {
-        offers: [],
-        sections: [],
-        restaurants: restaurants
-      };
-    },
-    
-    nearByRestaurantsPreview: async (_, { latitude, longitude, shopType }) => {
-      const restaurants = await prisma.restaurant.findMany({
-        where: shopType ? { shopType, isActive: true } : { isActive: true }
+      // Enrichir avec données géographiques
+      const enrichedRestaurants = restaurants.map(r => 
+        enrichRestaurantWithGeoData(r, latitude, longitude)
+      );
+      
+      // Trier par distance (les plus proches d'abord)
+      enrichedRestaurants.sort((a, b) => {
+        if (a.distanceInKm === null) return 1;
+        if (b.distanceInKm === null) return -1;
+        return a.distanceInKm - b.distanceInKm;
       });
+      
+      // Filtrer: garder ceux dans la zone de livraison OU à moins de 50km
+      const filteredRestaurants = enrichedRestaurants.filter(r => 
+        r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50)
+      );
       
       return {
         offers: [],
         sections: [],
-        restaurants: restaurants
+        restaurants: filteredRestaurants,
+        totalCount: filteredRestaurants.length,
+        page: 1,
+        limit: filteredRestaurants.length,
+        hasMore: false
+      };
+    },
+    
+    // Near by restaurants preview avec pagination
+    nearByRestaurantsPreview: async (_, { latitude, longitude, shopType, page = 1, limit = 10 }) => {
+      console.log(`nearByRestaurantsPreview: lat=${latitude}, lng=${longitude}, shopType=${shopType}, page=${page}, limit=${limit}`);
+      
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: {
+          zone: true,
+          reviews: true
+        }
+      });
+      
+      // Enrichir avec données géographiques
+      const enrichedRestaurants = restaurants.map(r => 
+        enrichRestaurantWithGeoData(r, latitude, longitude)
+      );
+      
+      // Trier par distance
+      enrichedRestaurants.sort((a, b) => {
+        if (a.distanceInKm === null) return 1;
+        if (b.distanceInKm === null) return -1;
+        return a.distanceInKm - b.distanceInKm;
+      });
+      
+      // Filtrer: garder ceux dans la zone de livraison OU à moins de 50km
+      const filteredRestaurants = enrichedRestaurants.filter(r => 
+        r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50)
+      );
+      
+      // Pagination
+      const totalCount = filteredRestaurants.length;
+      const startIndex = (page - 1) * limit;
+      const paginatedRestaurants = filteredRestaurants.slice(startIndex, startIndex + limit);
+      const hasMore = startIndex + limit < totalCount;
+      
+      return {
+        offers: [],
+        sections: [],
+        restaurants: paginatedRestaurants,
+        totalCount,
+        page,
+        limit,
+        hasMore
       };
     },
     
     topRatedVendors: async (_, { latitude, longitude }) => {
-      return prisma.restaurant.findMany({
+      const restaurants = await prisma.restaurant.findMany({
         where: { isActive: true },
-        orderBy: { reviewAverage: 'desc' },
-        take: 10
+        include: { zone: true, reviews: true }
       });
+      
+      const enriched = restaurants
+        .map(r => enrichRestaurantWithGeoData(r, latitude, longitude))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => (b.reviewAverage || 0) - (a.reviewAverage || 0))
+        .slice(0, 10);
+      
+      return enriched;
     },
     
     topRatedVendorsPreview: async (_, { latitude, longitude }) => {
-      return prisma.restaurant.findMany({
+      const restaurants = await prisma.restaurant.findMany({
         where: { isActive: true },
-        orderBy: { reviewAverage: 'desc' },
-        take: 10
+        include: { zone: true, reviews: true }
       });
+      
+      const enriched = restaurants
+        .map(r => enrichRestaurantWithGeoData(r, latitude, longitude))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => (b.reviewAverage || 0) - (a.reviewAverage || 0))
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    mostOrderedRestaurants: async () => {
-      return prisma.restaurant.findMany({
-        where: { isActive: true },
-        take: 10
+    mostOrderedRestaurants: async (_, { latitude, longitude, shopType }) => {
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: { 
+          zone: true, 
+          reviews: true,
+          _count: { select: { orders: true } }
+        }
       });
+      
+      const enriched = restaurants
+        .map(r => ({ 
+          ...enrichRestaurantWithGeoData(r, latitude, longitude),
+          orderCount: r._count?.orders || 0
+        }))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => b.orderCount - a.orderCount)
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    mostOrderedRestaurantsPreview: async () => {
-      return prisma.restaurant.findMany({
-        where: { isActive: true },
-        take: 10
+    mostOrderedRestaurantsPreview: async (_, { latitude, longitude, shopType }) => {
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: { 
+          zone: true, 
+          reviews: true,
+          _count: { select: { orders: true } }
+        }
       });
+      
+      const enriched = restaurants
+        .map(r => ({ 
+          ...enrichRestaurantWithGeoData(r, latitude, longitude),
+          orderCount: r._count?.orders || 0
+        }))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => b.orderCount - a.orderCount)
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    recentOrderRestaurants: async () => [],
-    recentOrderRestaurantsPreview: async () => [],
+    recentOrderRestaurants: async (_, { latitude, longitude }, context) => {
+      if (!context.userId) return [];
+      
+      const recentOrders = await prisma.order.findMany({
+        where: { userId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { restaurantId: true }
+      });
+      
+      const restaurantIds = [...new Set(recentOrders.map(o => o.restaurantId))];
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: { id: { in: restaurantIds }, isActive: true },
+        include: { zone: true, reviews: true }
+      });
+      
+      return restaurants.map(r => enrichRestaurantWithGeoData(r, latitude, longitude));
+    },
+    
+    recentOrderRestaurantsPreview: async (_, { latitude, longitude }, context) => {
+      if (!context.userId) return [];
+      
+      const recentOrders = await prisma.order.findMany({
+        where: { userId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { restaurantId: true }
+      });
+      
+      const restaurantIds = [...new Set(recentOrders.map(o => o.restaurantId))];
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: { id: { in: restaurantIds }, isActive: true },
+        include: { zone: true, reviews: true }
+      });
+      
+      return restaurants.map(r => enrichRestaurantWithGeoData(r, latitude, longitude));
+    },
     userFavourite: async () => [],
     
     reviewsByRestaurant: async (_, { restaurant }) => {
