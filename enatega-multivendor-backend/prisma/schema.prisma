@@ -67,12 +67,19 @@ model Restaurant {
   cuisines      String[]
   isActive      Boolean       @default(true)
   isAvailable   Boolean       @default(true)
+  isFeatured    Boolean       @default(false)
   openingTimes  OpeningTime[]
   categories    Category[]
   orders        Order[]
   reviews       Review[]
   zoneId        String?       @db.ObjectId
   zone          Zone?         @relation(fields: [zoneId], references: [id])
+  food          Food[]
+
+  // Index géospatial pour les recherches par localisation
+  @@index([location], name: "location_2dsphere")
+  @@index([isActive, isAvailable, isFeatured], name: "restaurant_status_idx")
+  @@index([name], name: "name_idx")
 }
 
 model Category {
@@ -93,17 +100,28 @@ model Food {
   variations   Variation[]
   categoryId   String      @db.ObjectId
   category     Category    @relation(fields: [categoryId], references: [id])
+  restaurantId String      @db.ObjectId
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
+
+  @@index([restaurantId], name: "restaurant_foods_idx")
+  @@index([categoryId], name: "category_foods_idx")
+  @@index([isOutOfStock], name: "out_of_stock_idx")
 }
 
 model User {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
-  name      String?
-  email     String?   @unique
-  phone     String?
-  password  String?
-  orders    Order[]
-  reviews   Review[]
-  addresses Address[]
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  name       String?
+  email      String?   @unique
+  phone      String?
+  password   String?
+  userTypeId String?   @db.ObjectId
+  orders     Order[]
+  reviews    Review[]
+  addresses  Address[]
+
+  // Index pour les recherches par téléphone et type d'utilisateur
+  @@index([phone], name: "phone_idx")
+  @@index([userTypeId], name: "user_type_idx")
 }
 
 model Rider {
@@ -155,24 +173,30 @@ model Order {
   coupon          Coupon?    @relation(fields: [couponId], references: [id])
   discountAmount  Float?
   review          Review?
+
+  @@index([userId], name: "user_orders_idx")
+  @@index([riderId], name: "rider_orders_idx")
+  @@index([restaurantId], name: "restaurant_orders_idx")
+  @@index([orderStatus, createdAt], name: "status_created_at_idx")
+  @@index([createdAt], name: "created_at_idx")
 }
 
 model Coupon {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  code         String   @unique
-  title        String?
-  discount     Float
-  discountType String?  // "percentage" or "fixed"
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  code           String    @unique
+  title          String?
+  discount       Float
+  discountType   String? // "percentage" or "fixed"
   minOrderAmount Float?
-  maxDiscount  Float?
-  enabled      Boolean  @default(true)
-  validFrom    DateTime?
-  validUntil   DateTime?
-  usageLimit   Int?
-  usedCount    Int      @default(0)
-  restaurantId String?  @db.ObjectId
-  orders       Order[]
-  createdAt    DateTime @default(now())
+  maxDiscount    Float?
+  enabled        Boolean   @default(true)
+  validFrom      DateTime?
+  validUntil     DateTime?
+  usageLimit     Int?
+  usedCount      Int       @default(0)
+  restaurantId   String?   @db.ObjectId
+  orders         Order[]
+  createdAt      DateTime  @default(now())
 }
 
 model Review {
@@ -186,6 +210,11 @@ model Review {
   userId       String     @db.ObjectId
   user         User       @relation(fields: [userId], references: [id])
   createdAt    DateTime   @default(now())
+
+  // Index pour les recherches par restaurant, utilisateur et note
+  @@index([restaurantId], name: "restaurant_reviews_idx")
+  @@index([userId], name: "user_reviews_idx")
+  @@index([rating], name: "rating_idx")
 }
 
 model Zone {
