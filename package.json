@@ -23,6 +23,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "global": "^4.4.0",
+    "graphql-ws": "^6.0.6",
     "lucide-react": "^0.562.0",
     "ngrok": "^5.0.0-beta.2",
     "prisma": "^7.2.0",

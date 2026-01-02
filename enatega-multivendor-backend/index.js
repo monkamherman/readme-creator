@@ -1,6 +1,10 @@
 const { ApolloServer } = require("@apollo/server");
 const { expressMiddleware } = require("@apollo/server/express4");
 const { ApolloServerPluginDrainHttpServer } = require("@apollo/server/plugin/drainHttpServer");
+const { makeExecutableSchema } = require("@graphql-tools/schema");
+const { WebSocketServer } = require("ws");
+const { useServer } = require("graphql-ws/lib/use/ws");
+const { PubSub } = require("graphql-subscriptions");
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -9,6 +13,16 @@ const WebSocket = require("ws");
 require("dotenv").config();
 
 const prisma = new PrismaClient();
+const pubsub = new PubSub();
+
+// Subscription event names
+const SUBSCRIPTION_EVENTS = {
+  ORDER_STATUS_CHANGED: 'ORDER_STATUS_CHANGED',
+  NEW_ORDER: 'NEW_ORDER',
+  RIDER_LOCATION_UPDATED: 'RIDER_LOCATION_UPDATED',
+  ORDER_ASSIGNED: 'ORDER_ASSIGNED',
+  NEW_CHAT_MESSAGE: 'NEW_CHAT_MESSAGE'
+};
 
 // Schéma GraphQL - Phase 1: Auth Compatible
 const typeDefs = `
@@ -930,6 +944,57 @@ const typeDefs = `
     order: String!
     rating: Int!
     description: String
+  }
+
+  # ============================================
+  # SUBSCRIPTION TYPE
+  # ============================================
+
+  type Subscription {
+    # Order subscriptions
+    subscriptionOrder(id: String!): SubscriptionOrderResponse
+    orderStatusChanged(userId: String): Order
+    subscriptionNewOrder(restaurantId: String): SubscriptionOrderResponse
+    subscriptionRiderLocation(oderId: String): RiderLocationUpdate
+    
+    # Rider subscriptions
+    subscriptionAssignRider(oderId: String): Order
+    subscriptionZoneOrders(zoneId: String!): Order
+    
+    # Chat subscriptions
+    subscriptionNewMessage(orderId: String!): ChatMessageResult
+  }
+
+  type SubscriptionOrderResponse {
+    _id: ID
+    oderId: String
+    orderStatus: String
+    rider: Rider
+    completionTime: String
+    orderAmount: Float
+    deliveryAddress: DeliveryAddress
+    paymentStatus: String
+    preparationTime: String
+    expectedTime: String
+    isPickedUp: Boolean
+    acceptedAt: String
+    pickedAt: String
+    deliveredAt: String
+    cancelledAt: String
+    assignedAt: String
+    restaurant: Restaurant
+    user: User
+    items: [OrderItem]
+    reason: String
+  }
+
+  type RiderLocationUpdate {
+    oderId: String
+    oderId: String
+    rider: Rider
+    location: Location
+    heading: Float
+    timestamp: String
   }
 `;
 
@@ -2736,6 +2801,145 @@ const resolvers = {
   DeviceToken: {
     _id: (parent) => parent.id,
   },
+
+  // =========== SUBSCRIPTION RESOLVERS ===========
+  Subscription: {
+    subscriptionOrder: {
+      subscribe: (_, { id }) => {
+        console.log(`Subscription: Order ${id} tracking started`);
+        return pubsub.asyncIterator([
+          `${SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED}_${id}`
+        ]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    orderStatusChanged: {
+      subscribe: (_, { userId }) => {
+        console.log(`Subscription: Order status for user ${userId}`);
+        if (userId) {
+          return pubsub.asyncIterator([
+            `${SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED}_USER_${userId}`
+          ]);
+        }
+        return pubsub.asyncIterator([SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    subscriptionNewOrder: {
+      subscribe: (_, { restaurantId }) => {
+        console.log(`Subscription: New orders for restaurant ${restaurantId}`);
+        if (restaurantId) {
+          return pubsub.asyncIterator([
+            `${SUBSCRIPTION_EVENTS.NEW_ORDER}_${restaurantId}`
+          ]);
+        }
+        return pubsub.asyncIterator([SUBSCRIPTION_EVENTS.NEW_ORDER]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    subscriptionRiderLocation: {
+      subscribe: (_, { oderId }) => {
+        console.log(`Subscription: Rider location for order ${oderId}`);
+        return pubsub.asyncIterator([
+          `${SUBSCRIPTION_EVENTS.RIDER_LOCATION_UPDATED}_${oderId}`
+        ]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    subscriptionAssignRider: {
+      subscribe: (_, { oderId }) => {
+        console.log(`Subscription: Rider assignment for order ${oderId}`);
+        return pubsub.asyncIterator([
+          `${SUBSCRIPTION_EVENTS.ORDER_ASSIGNED}_${oderId}`
+        ]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    subscriptionZoneOrders: {
+      subscribe: (_, { zoneId }) => {
+        console.log(`Subscription: Orders in zone ${zoneId}`);
+        return pubsub.asyncIterator([
+          `${SUBSCRIPTION_EVENTS.NEW_ORDER}_ZONE_${zoneId}`
+        ]);
+      },
+      resolve: (payload) => payload
+    },
+    
+    subscriptionNewMessage: {
+      subscribe: (_, { orderId }) => {
+        console.log(`Subscription: Chat messages for order ${orderId}`);
+        return pubsub.asyncIterator([
+          `${SUBSCRIPTION_EVENTS.NEW_CHAT_MESSAGE}_${orderId}`
+        ]);
+      },
+      resolve: (payload) => payload
+    }
+  }
+};
+
+// Helper pour publier les événements de subscription
+const publishOrderUpdate = async (order, eventType = 'STATUS') => {
+  const enrichedOrder = {
+    ...order,
+    _id: order.id,
+    oderId: order.orderId
+  };
+  
+  // Publier sur le canal de l'ordre spécifique
+  pubsub.publish(`${SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED}_${order.id}`, enrichedOrder);
+  
+  // Publier sur le canal de l'utilisateur
+  if (order.userId) {
+    pubsub.publish(`${SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED}_USER_${order.userId}`, enrichedOrder);
+  }
+  
+  // Publier globalement
+  pubsub.publish(SUBSCRIPTION_EVENTS.ORDER_STATUS_CHANGED, enrichedOrder);
+  
+  console.log(`Published order update: ${order.orderId} - ${order.orderStatus}`);
+};
+
+const publishNewOrder = async (order) => {
+  const enrichedOrder = {
+    ...order,
+    _id: order.id,
+    oderId: order.orderId
+  };
+  
+  // Publier sur le canal du restaurant
+  if (order.restaurantId) {
+    pubsub.publish(`${SUBSCRIPTION_EVENTS.NEW_ORDER}_${order.restaurantId}`, enrichedOrder);
+  }
+  
+  // Publier sur le canal de la zone
+  if (order.zoneId) {
+    pubsub.publish(`${SUBSCRIPTION_EVENTS.NEW_ORDER}_ZONE_${order.zoneId}`, enrichedOrder);
+  }
+  
+  pubsub.publish(SUBSCRIPTION_EVENTS.NEW_ORDER, enrichedOrder);
+  
+  console.log(`Published new order: ${order.orderId}`);
+};
+
+const publishRiderLocation = async (orderId, rider, location, heading = 0) => {
+  const update = {
+    oderId: orderId,
+    rider: { ...rider, _id: rider.id },
+    location,
+    heading,
+    timestamp: new Date().toISOString()
+  };
+  
+  pubsub.publish(`${SUBSCRIPTION_EVENTS.RIDER_LOCATION_UPDATED}_${orderId}`, update);
+};
+
+const publishChatMessage = async (orderId, message) => {
+  pubsub.publish(`${SUBSCRIPTION_EVENTS.NEW_CHAT_MESSAGE}_${orderId}`, message);
 };
 
 // Création du serveur
@@ -2743,13 +2947,56 @@ async function startServer() {
   const app = express();
   const httpServer = http.createServer(app);
 
-  // Créer le serveur WebSocket
+  // Créer le schéma exécutable pour les subscriptions
+  const schema = makeExecutableSchema({ typeDefs, resolvers });
+
+  // Créer le serveur WebSocket pour GraphQL subscriptions
+  const wsServer = new WebSocketServer({
+    server: httpServer,
+    path: '/graphql/ws'
+  });
+
+  // Configurer graphql-ws
+  const serverCleanup = useServer(
+    {
+      schema,
+      context: async (ctx) => {
+        // Extraire le token de la connexion
+        const token = ctx.connectionParams?.authorization?.replace('Bearer ', '') ||
+                      ctx.connectionParams?.token;
+        
+        let userId = null;
+        let userRole = null;
+        
+        if (token) {
+          try {
+            const decoded = verifyToken(token);
+            userId = decoded.userId;
+            userRole = decoded.role;
+          } catch (error) {
+            console.log('Invalid token in subscription connection');
+          }
+        }
+        
+        return { userId, userRole, pubsub };
+      },
+      onConnect: async (ctx) => {
+        console.log('GraphQL Subscription client connected');
+      },
+      onDisconnect: async (ctx) => {
+        console.log('GraphQL Subscription client disconnected');
+      }
+    },
+    wsServer
+  );
+
+  // Créer le serveur WebSocket pour les notifications
   const wss = new WebSocket.Server({ 
     server: httpServer,
     path: '/ws'
   });
 
-  // Gérer les connexions WebSocket
+  // Gérer les connexions WebSocket notifications
   wss.on('connection', (ws, request) => {
     const token = request.url.split('token=')[1];
     if (token) {
@@ -2777,9 +3024,19 @@ async function startServer() {
   }, 30000);
 
   const server = new ApolloServer({
-    typeDefs,
-    resolvers,
-    plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+    schema,
+    plugins: [
+      ApolloServerPluginDrainHttpServer({ httpServer }),
+      {
+        async serverWillStart() {
+          return {
+            async drainServer() {
+              await serverCleanup.dispose();
+            }
+          };
+        }
+      }
+    ],
   });
 
   await server.start();
@@ -2803,16 +3060,30 @@ async function startServer() {
   app.use("/graphql", cors(), express.json(), authMiddleware, expressMiddleware(server, {
     context: async ({ req }) => ({
       userId: req.userId,
-      userRole: req.userRole
+      userRole: req.userRole,
+      pubsub,
+      publishOrderUpdate,
+      publishNewOrder,
+      publishRiderLocation,
+      publishChatMessage
     })
   }));
 
   await new Promise((resolve) => httpServer.listen({ port: 4000 }, resolve));
 
   console.log("🚀 Serveur GraphQL prêt sur http://localhost:4000/graphql");
-  console.log("📡 WebSocket prêt sur ws://localhost:4000/ws");
+  console.log("📡 GraphQL Subscriptions sur ws://localhost:4000/graphql/ws");
+  console.log("📡 WebSocket Notifications sur ws://localhost:4000/ws");
 }
 
 startServer().catch((err) => {
   console.error("Erreur lors du démarrage du serveur:", err);
 });
+
+// Export des fonctions de publication pour usage externe
+module.exports = {
+  publishOrderUpdate,
+  publishNewOrder,
+  publishRiderLocation,
+  publishChatMessage
+};
