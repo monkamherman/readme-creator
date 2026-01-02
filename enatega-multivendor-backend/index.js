@@ -131,6 +131,38 @@ const typeDefs = `
     isActive: Boolean
   }
 
+  type DeliveryBounds {
+    coordinates: [[[[Float]]]]
+  }
+
+  type RestaurantPreview {
+    _id: ID!
+    orderId: Int
+    orderPrefix: String
+    name: String
+    image: String
+    logo: String
+    slug: String
+    shopType: String
+    address: String
+    location: Location
+    deliveryTime: Int
+    minimumOrder: Float
+    tax: Float
+    rating: Float
+    reviewAverage: Float
+    reviewCount: Int
+    cuisines: [String]
+    isActive: Boolean
+    isAvailable: Boolean
+    openingTimes: [OpeningTime]
+    deliveryBounds: DeliveryBounds
+    zone: Zone
+    distanceInKm: Float
+    isWithinDeliveryZone: Boolean
+    commissionRate: Float
+  }
+
   type Restaurant {
     _id: ID!
     orderId: Int
@@ -167,12 +199,14 @@ const typeDefs = `
     reviewData: ReviewData
     zone: Zone
     owner: Owner
-    deliveryBounds: Location
+    deliveryBounds: DeliveryBounds
     stripeDetailsSubmitted: Boolean
     commissionRate: Float
     notificationToken: String
     enableNotification: Boolean
     restaurantUrl: String
+    distanceInKm: Float
+    isWithinDeliveryZone: Boolean
   }
 
   type Category {
@@ -475,9 +509,17 @@ const typeDefs = `
 
   type Coupon {
     _id: ID!
+    code: String
     title: String
     discount: Float
+    discountType: String
+    minOrderAmount: Float
+    maxDiscount: Float
     enabled: Boolean
+    validFrom: String
+    validUntil: String
+    usageLimit: Int
+    usedCount: Int
   }
 
   type CouponResult {
@@ -516,8 +558,8 @@ const typeDefs = `
     # Restaurants
     restaurants: [Restaurant]
     restaurant(id: String): Restaurant
-    nearByRestaurants(latitude: Float, longitude: Float, shopType: String): NearByRestaurantsResult
-    nearByRestaurantsPreview(latitude: Float, longitude: Float, shopType: String): NearByRestaurantsResult
+    nearByRestaurants(latitude: Float!, longitude: Float!, shopType: String, ip: String): NearByRestaurantsResult
+    nearByRestaurantsPreview(latitude: Float!, longitude: Float!, shopType: String, page: Int, limit: Int): NearByRestaurantsResult
     topRatedVendors(latitude: Float!, longitude: Float!): [Restaurant]
     topRatedVendorsPreview(latitude: Float!, longitude: Float!): [Restaurant]
     mostOrderedRestaurants(latitude: Float!, longitude: Float!, shopType: String): [Restaurant]
@@ -541,9 +583,9 @@ const typeDefs = `
     profile: User
     
     # Orders
-    orders(offset: Int): [Order]
+    orders(offset: Int, limit: Int): [Order]
     order(id: String!): Order
-    allOrders(page: Int): [Order]
+    allOrders(page: Int, limit: Int): [Order]
     
     # Riders
     riders: [Rider]
@@ -576,7 +618,11 @@ const typeDefs = `
   type NearByRestaurantsResult {
     offers: [Offer]
     sections: [Section]
-    restaurants: [Restaurant]
+    restaurants: [RestaurantPreview]
+    totalCount: Int
+    page: Int
+    limit: Int
+    hasMore: Boolean
   }
 
   type Offer {
@@ -900,6 +946,100 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// ============================================
+// FONCTIONS GÉOLOCALISATION
+// ============================================
+
+/**
+ * Calcule la distance en km entre deux points (formule Haversine)
+ */
+const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Rayon de la Terre en km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+/**
+ * Vérifie si un point est dans un polygone (algorithme ray-casting)
+ */
+const isPointInPolygon = (point, polygon) => {
+  if (!polygon || !polygon.length) return false;
+  
+  const [x, y] = point; // [lng, lat]
+  let inside = false;
+  
+  // Gérer les polygones imbriqués (GeoJSON style)
+  const coords = Array.isArray(polygon[0][0]) ? polygon[0] : polygon;
+  
+  for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+    const xi = coords[i][0], yi = coords[i][1];
+    const xj = coords[j][0], yj = coords[j][1];
+    
+    const intersect =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  
+  return inside;
+};
+
+/**
+ * Vérifie si un utilisateur est dans la zone de livraison d'un restaurant
+ */
+const isWithinDeliveryBounds = (userLat, userLng, deliveryBounds) => {
+  if (!deliveryBounds?.coordinates) return false;
+  
+  // deliveryBounds.coordinates est un tableau de polygones
+  const polygons = deliveryBounds.coordinates;
+  
+  // Vérifier chaque polygone
+  for (const polygon of polygons) {
+    if (isPointInPolygon([userLng, userLat], polygon)) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+/**
+ * Enrichit un restaurant avec les infos de distance et zone
+ */
+const enrichRestaurantWithGeoData = (restaurant, userLat, userLng) => {
+  const restLat = restaurant.location?.coordinates?.[1];
+  const restLng = restaurant.location?.coordinates?.[0];
+  
+  let distanceInKm = null;
+  let isWithinDeliveryZone = false;
+  
+  if (restLat && restLng && userLat && userLng) {
+    distanceInKm = calculateHaversineDistance(userLat, userLng, restLat, restLng);
+    distanceInKm = Math.round(distanceInKm * 100) / 100; // Arrondir à 2 décimales
+  }
+  
+  // Vérifier si dans la zone de livraison
+  if (restaurant.deliveryBounds) {
+    isWithinDeliveryZone = isWithinDeliveryBounds(userLat, userLng, restaurant.deliveryBounds);
+  }
+  
+  return {
+    ...restaurant,
+    _id: restaurant.id,
+    distanceInKm,
+    isWithinDeliveryZone,
+    rating: restaurant.reviewAverage || 0,
+    reviewCount: restaurant.reviews?.length || 0
+  };
+};
+
 // Resolvers
 const resolvers = {
   Query: {
@@ -921,13 +1061,31 @@ const resolvers = {
           zone: true
         }
       });
-      return restaurant;
+      
+      if (!restaurant) return null;
+      
+      return {
+        ...restaurant,
+        _id: restaurant.id,
+        rating: restaurant.reviewAverage || 0,
+        reviewCount: restaurant.reviews?.length || 0,
+        reviewData: {
+          reviews: restaurant.reviews,
+          ratings: restaurant.reviewAverage || 0,
+          total: restaurant.reviews?.length || 0
+        }
+      };
     },
     
-    // Near by restaurants (placeholder - à implémenter avec géoloc)
-    nearByRestaurants: async (_, { latitude, longitude, shopType }) => {
+    // Near by restaurants avec géolocalisation réelle
+    nearByRestaurants: async (_, { latitude, longitude, shopType, ip }) => {
+      console.log(`nearByRestaurants: lat=${latitude}, lng=${longitude}, shopType=${shopType}`);
+      
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
       const restaurants = await prisma.restaurant.findMany({
-        where: shopType ? { shopType, isActive: true } : { isActive: true },
+        where: whereClause,
         include: {
           categories: {
             include: {
@@ -939,57 +1097,202 @@ const resolvers = {
         }
       });
       
-      return {
-        offers: [],
-        sections: [],
-        restaurants: restaurants
-      };
-    },
-    
-    nearByRestaurantsPreview: async (_, { latitude, longitude, shopType }) => {
-      const restaurants = await prisma.restaurant.findMany({
-        where: shopType ? { shopType, isActive: true } : { isActive: true }
+      // Enrichir avec données géographiques
+      const enrichedRestaurants = restaurants.map(r => 
+        enrichRestaurantWithGeoData(r, latitude, longitude)
+      );
+      
+      // Trier par distance (les plus proches d'abord)
+      enrichedRestaurants.sort((a, b) => {
+        if (a.distanceInKm === null) return 1;
+        if (b.distanceInKm === null) return -1;
+        return a.distanceInKm - b.distanceInKm;
       });
+      
+      // Filtrer: garder ceux dans la zone de livraison OU à moins de 50km
+      const filteredRestaurants = enrichedRestaurants.filter(r => 
+        r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50)
+      );
       
       return {
         offers: [],
         sections: [],
-        restaurants: restaurants
+        restaurants: filteredRestaurants,
+        totalCount: filteredRestaurants.length,
+        page: 1,
+        limit: filteredRestaurants.length,
+        hasMore: false
+      };
+    },
+    
+    // Near by restaurants preview avec pagination
+    nearByRestaurantsPreview: async (_, { latitude, longitude, shopType, page = 1, limit = 10 }) => {
+      console.log(`nearByRestaurantsPreview: lat=${latitude}, lng=${longitude}, shopType=${shopType}, page=${page}, limit=${limit}`);
+      
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: {
+          zone: true,
+          reviews: true
+        }
+      });
+      
+      // Enrichir avec données géographiques
+      const enrichedRestaurants = restaurants.map(r => 
+        enrichRestaurantWithGeoData(r, latitude, longitude)
+      );
+      
+      // Trier par distance
+      enrichedRestaurants.sort((a, b) => {
+        if (a.distanceInKm === null) return 1;
+        if (b.distanceInKm === null) return -1;
+        return a.distanceInKm - b.distanceInKm;
+      });
+      
+      // Filtrer: garder ceux dans la zone de livraison OU à moins de 50km
+      const filteredRestaurants = enrichedRestaurants.filter(r => 
+        r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50)
+      );
+      
+      // Pagination
+      const totalCount = filteredRestaurants.length;
+      const startIndex = (page - 1) * limit;
+      const paginatedRestaurants = filteredRestaurants.slice(startIndex, startIndex + limit);
+      const hasMore = startIndex + limit < totalCount;
+      
+      return {
+        offers: [],
+        sections: [],
+        restaurants: paginatedRestaurants,
+        totalCount,
+        page,
+        limit,
+        hasMore
       };
     },
     
     topRatedVendors: async (_, { latitude, longitude }) => {
-      return prisma.restaurant.findMany({
+      const restaurants = await prisma.restaurant.findMany({
         where: { isActive: true },
-        orderBy: { reviewAverage: 'desc' },
-        take: 10
+        include: { zone: true, reviews: true }
       });
+      
+      const enriched = restaurants
+        .map(r => enrichRestaurantWithGeoData(r, latitude, longitude))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => (b.reviewAverage || 0) - (a.reviewAverage || 0))
+        .slice(0, 10);
+      
+      return enriched;
     },
     
     topRatedVendorsPreview: async (_, { latitude, longitude }) => {
-      return prisma.restaurant.findMany({
+      const restaurants = await prisma.restaurant.findMany({
         where: { isActive: true },
-        orderBy: { reviewAverage: 'desc' },
-        take: 10
+        include: { zone: true, reviews: true }
       });
+      
+      const enriched = restaurants
+        .map(r => enrichRestaurantWithGeoData(r, latitude, longitude))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => (b.reviewAverage || 0) - (a.reviewAverage || 0))
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    mostOrderedRestaurants: async () => {
-      return prisma.restaurant.findMany({
-        where: { isActive: true },
-        take: 10
+    mostOrderedRestaurants: async (_, { latitude, longitude, shopType }) => {
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: { 
+          zone: true, 
+          reviews: true,
+          _count: { select: { orders: true } }
+        }
       });
+      
+      const enriched = restaurants
+        .map(r => ({ 
+          ...enrichRestaurantWithGeoData(r, latitude, longitude),
+          orderCount: r._count?.orders || 0
+        }))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => b.orderCount - a.orderCount)
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    mostOrderedRestaurantsPreview: async () => {
-      return prisma.restaurant.findMany({
-        where: { isActive: true },
-        take: 10
+    mostOrderedRestaurantsPreview: async (_, { latitude, longitude, shopType }) => {
+      const whereClause = { isActive: true };
+      if (shopType) whereClause.shopType = shopType;
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: whereClause,
+        include: { 
+          zone: true, 
+          reviews: true,
+          _count: { select: { orders: true } }
+        }
       });
+      
+      const enriched = restaurants
+        .map(r => ({ 
+          ...enrichRestaurantWithGeoData(r, latitude, longitude),
+          orderCount: r._count?.orders || 0
+        }))
+        .filter(r => r.isWithinDeliveryZone || (r.distanceInKm !== null && r.distanceInKm <= 50))
+        .sort((a, b) => b.orderCount - a.orderCount)
+        .slice(0, 10);
+      
+      return enriched;
     },
     
-    recentOrderRestaurants: async () => [],
-    recentOrderRestaurantsPreview: async () => [],
+    recentOrderRestaurants: async (_, { latitude, longitude }, context) => {
+      if (!context.userId) return [];
+      
+      const recentOrders = await prisma.order.findMany({
+        where: { userId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { restaurantId: true }
+      });
+      
+      const restaurantIds = [...new Set(recentOrders.map(o => o.restaurantId))];
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: { id: { in: restaurantIds }, isActive: true },
+        include: { zone: true, reviews: true }
+      });
+      
+      return restaurants.map(r => enrichRestaurantWithGeoData(r, latitude, longitude));
+    },
+    
+    recentOrderRestaurantsPreview: async (_, { latitude, longitude }, context) => {
+      if (!context.userId) return [];
+      
+      const recentOrders = await prisma.order.findMany({
+        where: { userId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { restaurantId: true }
+      });
+      
+      const restaurantIds = [...new Set(recentOrders.map(o => o.restaurantId))];
+      
+      const restaurants = await prisma.restaurant.findMany({
+        where: { id: { in: restaurantIds }, isActive: true },
+        include: { zone: true, reviews: true }
+      });
+      
+      return restaurants.map(r => enrichRestaurantWithGeoData(r, latitude, longitude));
+    },
     userFavourite: async () => [],
     
     reviewsByRestaurant: async (_, { restaurant }) => {
@@ -1030,71 +1333,107 @@ const resolvers = {
       return null;
     },
     
-    // Orders
-    orders: async (_, { offset = 0 }, context) => {
-      if (context.userId) {
-        return prisma.order.findMany({
-          where: { userId: context.userId },
+    // Orders avec pagination améliorée
+    orders: async (_, { offset = 0, limit = 20 }, context) => {
+      const whereClause = context.userId ? { userId: context.userId } : {};
+      
+      const [orders, totalCount] = await Promise.all([
+        prisma.order.findMany({
+          where: whereClause,
           skip: offset,
-          take: 20,
+          take: limit,
           orderBy: { createdAt: 'desc' },
           include: {
             restaurant: true,
             rider: true,
-            review: true
+            user: true,
+            review: true,
+            coupon: true
           }
-        });
-      }
-      return prisma.order.findMany({
-        skip: offset,
-        take: 20,
-        orderBy: { createdAt: 'desc' }
-      });
+        }),
+        prisma.order.count({ where: whereClause })
+      ]);
+      
+      // Enrichir les commandes avec _id
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     order: async (_, { id }) => {
-      return prisma.order.findUnique({
+      const order = await prisma.order.findUnique({
         where: { id },
         include: {
           restaurant: true,
           user: true,
           rider: true,
-          review: true
+          review: true,
+          coupon: true
         }
       });
+      
+      if (!order) return null;
+      
+      return {
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      };
     },
     
-    allOrders: async (_, { page = 0 }) => {
-      return prisma.order.findMany({
-        skip: page * 20,
-        take: 20,
+    allOrders: async (_, { page = 0, limit = 20 }) => {
+      const orders = await prisma.order.findMany({
+        skip: page * limit,
+        take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
           restaurant: true,
           user: true,
-          rider: true
+          rider: true,
+          coupon: true
         }
       });
+      
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     // Riders
     riders: () => prisma.rider.findMany(),
     rider: async (_, { id }) => {
       if (!id) return null;
-      return prisma.rider.findUnique({ where: { id } });
+      const rider = await prisma.rider.findUnique({ where: { id } });
+      return rider ? { ...rider, _id: rider.id } : null;
     },
     riderOrders: async (_, __, context) => {
-      if (context.userId) {
-        return prisma.order.findMany({
-          where: { riderId: context.userId },
-          orderBy: { createdAt: 'desc' },
-          include: {
-            restaurant: true,
-            user: true
-          }
-        });
-      }
-      return [];
+      if (!context.userId) return [];
+      
+      const orders = await prisma.order.findMany({
+        where: { riderId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          restaurant: true,
+          user: true
+        }
+      });
+      
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     // Others
@@ -1106,7 +1445,45 @@ const resolvers = {
     banners: async () => [],
     tips: async () => ({ _id: '1', tipVariations: [5, 10, 15, 20], enabled: true }),
     taxes: async () => [],
-    coupon: async () => null,
+    
+    // Coupon query
+    coupon: async (_, { coupon: code, restaurantId }) => {
+      const couponData = await prisma.coupon.findFirst({
+        where: {
+          code: code.toUpperCase(),
+          enabled: true,
+          OR: [
+            { restaurantId: null },
+            { restaurantId }
+          ]
+        }
+      });
+      
+      if (!couponData) {
+        return { coupon: null, message: "Coupon invalide ou expiré", success: false };
+      }
+      
+      // Vérifier validité temporelle
+      const now = new Date();
+      if (couponData.validFrom && now < couponData.validFrom) {
+        return { coupon: null, message: "Ce coupon n'est pas encore valide", success: false };
+      }
+      if (couponData.validUntil && now > couponData.validUntil) {
+        return { coupon: null, message: "Ce coupon a expiré", success: false };
+      }
+      
+      // Vérifier limite d'utilisation
+      if (couponData.usageLimit && couponData.usedCount >= couponData.usageLimit) {
+        return { coupon: null, message: "Ce coupon a atteint sa limite d'utilisation", success: false };
+      }
+      
+      return {
+        coupon: { ...couponData, _id: couponData.id },
+        message: "Coupon appliqué avec succès",
+        success: true
+      };
+    },
+    
     getVersions: async () => ({
       customerAppVersion: { android: '1.0.0', ios: '1.0.0' },
       riderAppVersion: '1.0.0',
@@ -1681,91 +2058,278 @@ const resolvers = {
     
     // =========== ORDERS ===========
     
+    // PlaceOrder complet avec validation et calcul de montant
     placeOrder: async (_, args, context) => {
-      const { restaurant, orderInput, paymentMethod, couponCode, tipping, taxationAmount, address, orderDate, isPickedUp, deliveryCharges, instructions } = args;
+      const { 
+        restaurant: restaurantId, 
+        orderInput, 
+        paymentMethod, 
+        couponCode, 
+        tipping = 0, 
+        taxationAmount = 0, 
+        address, 
+        orderDate, 
+        isPickedUp = false, 
+        deliveryCharges = 0, 
+        instructions 
+      } = args;
       
-      // Générer un orderId unique
-      const orderCount = await prisma.order.count();
-      const orderId = `ORD-${Date.now()}-${orderCount + 1}`;
+      console.log(`placeOrder: restaurant=${restaurantId}, items=${orderInput?.length}, coupon=${couponCode}`);
       
-      // Calculer le montant total
+      // Validation: vérifier que le restaurant existe
+      const restaurant = await prisma.restaurant.findUnique({
+        where: { id: restaurantId },
+        include: { categories: { include: { foods: true } } }
+      });
+      
+      if (!restaurant) {
+        throw new Error("Restaurant non trouvé");
+      }
+      
+      if (!restaurant.isActive || !restaurant.isAvailable) {
+        throw new Error("Ce restaurant n'est pas disponible actuellement");
+      }
+      
+      // Valider et calculer le montant des items
       let orderAmount = 0;
-      const items = orderInput.map(item => ({
-        ...item,
-        _id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      }));
+      const processedItems = [];
       
+      for (const item of orderInput) {
+        // Trouver le food item
+        let foodItem = null;
+        for (const cat of restaurant.categories) {
+          const found = cat.foods.find(f => f.id === item.food);
+          if (found) {
+            foodItem = found;
+            break;
+          }
+        }
+        
+        if (!foodItem) {
+          throw new Error(`Article non trouvé: ${item.food}`);
+        }
+        
+        if (foodItem.isOutOfStock) {
+          throw new Error(`Article en rupture de stock: ${foodItem.title}`);
+        }
+        
+        // Trouver la variation
+        const variation = foodItem.variations?.find(v => v.id === item.variation);
+        const itemPrice = variation ? variation.price : 0;
+        const discountedPrice = variation?.discounted || itemPrice;
+        
+        const itemTotal = discountedPrice * item.quantity;
+        orderAmount += itemTotal;
+        
+        processedItems.push({
+          _id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          food: item.food,
+          title: foodItem.title,
+          description: foodItem.description,
+          image: foodItem.image,
+          quantity: item.quantity,
+          variation: variation || null,
+          addons: item.addons || [],
+          specialInstructions: item.specialInstructions,
+          isActive: true
+        });
+      }
+      
+      // Vérifier le montant minimum
+      if (restaurant.minimumOrder && orderAmount < restaurant.minimumOrder) {
+        throw new Error(`Le montant minimum de commande est ${restaurant.minimumOrder}`);
+      }
+      
+      // Appliquer le coupon si fourni
+      let couponId = null;
+      let discountAmount = 0;
+      
+      if (couponCode) {
+        const coupon = await prisma.coupon.findFirst({
+          where: {
+            code: couponCode.toUpperCase(),
+            enabled: true,
+            OR: [
+              { restaurantId: null },
+              { restaurantId }
+            ]
+          }
+        });
+        
+        if (coupon) {
+          const now = new Date();
+          const isValid = 
+            (!coupon.validFrom || now >= coupon.validFrom) &&
+            (!coupon.validUntil || now <= coupon.validUntil) &&
+            (!coupon.usageLimit || coupon.usedCount < coupon.usageLimit) &&
+            (!coupon.minOrderAmount || orderAmount >= coupon.minOrderAmount);
+          
+          if (isValid) {
+            if (coupon.discountType === 'percentage') {
+              discountAmount = (orderAmount * coupon.discount) / 100;
+              if (coupon.maxDiscount) {
+                discountAmount = Math.min(discountAmount, coupon.maxDiscount);
+              }
+            } else {
+              discountAmount = coupon.discount;
+            }
+            
+            couponId = coupon.id;
+            
+            // Incrémenter le compteur d'utilisation
+            await prisma.coupon.update({
+              where: { id: coupon.id },
+              data: { usedCount: { increment: 1 } }
+            });
+          }
+        }
+      }
+      
+      // Calculer le total final
+      const finalAmount = orderAmount - discountAmount + tipping + taxationAmount + deliveryCharges;
+      
+      // Générer un orderId unique avec préfixe du restaurant
+      const orderCount = await prisma.order.count({ where: { restaurantId } });
+      const prefix = restaurant.orderPrefix || 'ORD';
+      const orderId = `${prefix}-${Date.now().toString(36).toUpperCase()}-${orderCount + 1}`;
+      
+      // Créer la commande
       const order = await prisma.order.create({
         data: {
           orderId,
-          restaurantId: restaurant,
-          userId: context.userId || 'anonymous',
-          items: items,
+          restaurantId,
+          userId: context.userId,
+          items: processedItems,
           deliveryAddress: address,
           paymentMethod,
+          orderAmount: finalAmount,
+          paidAmount: 0,
           tipping,
           taxationAmount,
           deliveryCharges,
+          discountAmount,
+          couponId,
           instructions,
-          orderDate: new Date(orderDate),
+          orderDate: orderDate ? new Date(orderDate) : new Date(),
+          expectedTime: new Date(Date.now() + (restaurant.deliveryTime || 30) * 60000),
           isPickedUp,
           orderStatus: 'PENDING',
-          paymentStatus: 'PENDING',
-          createdAt: new Date()
+          paymentStatus: paymentMethod === 'COD' ? 'PENDING' : 'PENDING',
+          isRinged: false,
+          isRiderRinged: false
         },
         include: {
           restaurant: true,
-          user: true
+          user: true,
+          coupon: true
         }
       });
       
-      // Envoyer notifications
+      // Envoyer notification au restaurant
       wsManager.sendNewOrderNotification(order);
       
-      return order;
+      console.log(`Order created: ${orderId}, amount: ${finalAmount}, discount: ${discountAmount}`);
+      
+      return {
+        ...order,
+        _id: order.id,
+        restaurant: { ...order.restaurant, _id: order.restaurant.id },
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      };
     },
     
     updateOrderStatus: async (_, { orderId, status }) => {
       const order = await prisma.order.update({
         where: { id: orderId },
-        data: { orderStatus: status }
+        data: { orderStatus: status },
+        include: { restaurant: true, user: true, rider: true }
       });
       
       wsManager.sendOrderStatusNotification(order, status);
       
-      return order;
+      return { ...order, _id: order.id };
     },
     
-    abortOrder: async (_, { id }) => {
-      return prisma.order.update({
+    abortOrder: async (_, { id }, context) => {
+      const order = await prisma.order.findUnique({ where: { id } });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      // Vérifier que l'utilisateur peut annuler
+      if (context.userId && order.userId !== context.userId) {
+        throw new Error("Non autorisé");
+      }
+      
+      // Ne peut annuler que si la commande est en attente
+      if (order.orderStatus !== 'PENDING') {
+        throw new Error("Cette commande ne peut plus être annulée");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id },
-        data: { orderStatus: 'CANCELLED' }
+        data: { 
+          orderStatus: 'CANCELLED',
+          cancelledAt: new Date()
+        },
+        include: { restaurant: true, user: true }
       });
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'CANCELLED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
     reviewOrder: async (_, { reviewInput }, context) => {
       const { order: orderId, rating, description } = reviewInput;
       
+      // Validation
+      if (rating < 1 || rating > 5) {
+        throw new Error("La note doit être entre 1 et 5");
+      }
+      
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        include: { restaurant: true }
+        include: { restaurant: true, review: true }
       });
       
       if (!order) {
         throw new Error("Commande non trouvée");
       }
       
+      if (order.review) {
+        throw new Error("Cette commande a déjà été évaluée");
+      }
+      
+      if (order.orderStatus !== 'DELIVERED') {
+        throw new Error("Vous ne pouvez évaluer qu'une commande livrée");
+      }
+      
+      // Créer l'avis
       await prisma.review.create({
         data: {
           rating,
-          description,
+          description: description?.trim() || null,
           orderId,
           restaurantId: order.restaurantId,
           userId: context.userId || order.userId
         }
       });
       
-      return prisma.order.findUnique({
+      // Recalculer la moyenne du restaurant
+      const reviews = await prisma.review.findMany({
+        where: { restaurantId: order.restaurantId }
+      });
+      
+      const avgRating = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
+      
+      await prisma.restaurant.update({
+        where: { id: order.restaurantId },
+        data: { reviewAverage: avgRating }
+      });
+      
+      const updatedOrder = await prisma.order.findUnique({
         where: { id: orderId },
         include: {
           restaurant: true,
@@ -1774,40 +2338,160 @@ const resolvers = {
           review: true
         }
       });
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
-    // Store mutations
-    acceptOrder: async (_, { _id, time }) => {
-      return prisma.order.update({
+    // =========== STORE MUTATIONS ===========
+    
+    acceptOrder: async (_, { _id, time }, context) => {
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { restaurant: true, user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      const preparationMinutes = time ? parseInt(time) : 20;
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'ACCEPTED',
-          preparationTime: time ? new Date(Date.now() + parseInt(time) * 60000) : null,
-          acceptedAt: new Date()
-        }
+          preparationTime: new Date(Date.now() + preparationMinutes * 60000),
+          expectedTime: new Date(Date.now() + (preparationMinutes + 15) * 60000),
+          acceptedAt: new Date(),
+          isRinged: true
+        },
+        include: { restaurant: true, user: true, rider: true }
       });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande acceptée",
+          message: `Votre commande #${order.orderId} a été acceptée. Temps de préparation: ${preparationMinutes} min`,
+          type: "ORDER_ACCEPTED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'ACCEPTED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
-    cancelOrder: async (_, { _id, reason }) => {
-      return prisma.order.update({
+    cancelOrder: async (_, { _id, reason }, context) => {
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      // Validation de la raison
+      if (!reason || reason.trim().length < 5) {
+        throw new Error("Veuillez fournir une raison valide pour l'annulation");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'CANCELLED',
-          reason,
-          cancelledAt: new Date()
-        }
+          reason: reason.trim(),
+          cancelledAt: new Date(),
+          isRinged: true
+        },
+        include: { restaurant: true, user: true, rider: true }
       });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande annulée",
+          message: `Votre commande #${order.orderId} a été annulée. Raison: ${reason}`,
+          type: "ORDER_CANCELLED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'CANCELLED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
     orderPickedUp: async (_, { _id }) => {
-      return prisma.order.update({
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'PICKED',
           isPickedUp: true,
           pickedAt: new Date()
+        },
+        include: { restaurant: true, user: true, rider: true }
+      });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande récupérée",
+          message: `Votre commande #${order.orderId} a été récupérée par le livreur`,
+          type: "ORDER_PICKED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'PICKED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
+    },
+    
+    // Apply coupon mutation
+    applyCoupon: async (_, { coupon: code, restaurantId }) => {
+      const coupon = await prisma.coupon.findFirst({
+        where: {
+          code: code.toUpperCase().trim(),
+          enabled: true,
+          OR: [
+            { restaurantId: null },
+            { restaurantId }
+          ]
         }
       });
+      
+      if (!coupon) {
+        return { coupon: null, message: "Code coupon invalide", success: false };
+      }
+      
+      const now = new Date();
+      
+      if (coupon.validFrom && now < coupon.validFrom) {
+        return { coupon: null, message: "Ce coupon n'est pas encore actif", success: false };
+      }
+      
+      if (coupon.validUntil && now > coupon.validUntil) {
+        return { coupon: null, message: "Ce coupon a expiré", success: false };
+      }
+      
+      if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+        return { coupon: null, message: "Ce coupon a atteint sa limite d'utilisation", success: false };
+      }
+      
+      return {
+        coupon: { ...coupon, _id: coupon.id },
+        message: `Coupon appliqué: ${coupon.discountType === 'percentage' ? coupon.discount + '%' : coupon.discount + '€'} de réduction`,
+        success: true
+      };
     },
     
     muteRing: async (_, { orderId }) => {
