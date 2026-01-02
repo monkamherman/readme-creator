@@ -143,7 +143,36 @@ model Order {
   isPickedUp      Boolean?
   deliveryCharges Float?
   instructions    String?
+  reason          String?
+  isRinged        Boolean?
+  isRiderRinged   Boolean?
+  acceptedAt      DateTime?
+  pickedAt        DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+  assignedAt      DateTime?
+  couponId        String?    @db.ObjectId
+  coupon          Coupon?    @relation(fields: [couponId], references: [id])
+  discountAmount  Float?
   review          Review?
+}
+
+model Coupon {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  code         String   @unique
+  title        String?
+  discount     Float
+  discountType String?  // "percentage" or "fixed"
+  minOrderAmount Float?
+  maxDiscount  Float?
+  enabled      Boolean  @default(true)
+  validFrom    DateTime?
+  validUntil   DateTime?
+  usageLimit   Int?
+  usedCount    Int      @default(0)
+  restaurantId String?  @db.ObjectId
+  orders       Order[]
+  createdAt    DateTime @default(now())
 }
 
 model Review {

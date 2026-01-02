@@ -509,9 +509,17 @@ const typeDefs = `
 
   type Coupon {
     _id: ID!
+    code: String
     title: String
     discount: Float
+    discountType: String
+    minOrderAmount: Float
+    maxDiscount: Float
     enabled: Boolean
+    validFrom: String
+    validUntil: String
+    usageLimit: Int
+    usedCount: Int
   }
 
   type CouponResult {
@@ -575,9 +583,9 @@ const typeDefs = `
     profile: User
     
     # Orders
-    orders(offset: Int): [Order]
+    orders(offset: Int, limit: Int): [Order]
     order(id: String!): Order
-    allOrders(page: Int): [Order]
+    allOrders(page: Int, limit: Int): [Order]
     
     # Riders
     riders: [Rider]
@@ -1325,71 +1333,107 @@ const resolvers = {
       return null;
     },
     
-    // Orders
-    orders: async (_, { offset = 0 }, context) => {
-      if (context.userId) {
-        return prisma.order.findMany({
-          where: { userId: context.userId },
+    // Orders avec pagination améliorée
+    orders: async (_, { offset = 0, limit = 20 }, context) => {
+      const whereClause = context.userId ? { userId: context.userId } : {};
+      
+      const [orders, totalCount] = await Promise.all([
+        prisma.order.findMany({
+          where: whereClause,
           skip: offset,
-          take: 20,
+          take: limit,
           orderBy: { createdAt: 'desc' },
           include: {
             restaurant: true,
             rider: true,
-            review: true
+            user: true,
+            review: true,
+            coupon: true
           }
-        });
-      }
-      return prisma.order.findMany({
-        skip: offset,
-        take: 20,
-        orderBy: { createdAt: 'desc' }
-      });
+        }),
+        prisma.order.count({ where: whereClause })
+      ]);
+      
+      // Enrichir les commandes avec _id
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     order: async (_, { id }) => {
-      return prisma.order.findUnique({
+      const order = await prisma.order.findUnique({
         where: { id },
         include: {
           restaurant: true,
           user: true,
           rider: true,
-          review: true
+          review: true,
+          coupon: true
         }
       });
+      
+      if (!order) return null;
+      
+      return {
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      };
     },
     
-    allOrders: async (_, { page = 0 }) => {
-      return prisma.order.findMany({
-        skip: page * 20,
-        take: 20,
+    allOrders: async (_, { page = 0, limit = 20 }) => {
+      const orders = await prisma.order.findMany({
+        skip: page * limit,
+        take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
           restaurant: true,
           user: true,
-          rider: true
+          rider: true,
+          coupon: true
         }
       });
+      
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        rider: order.rider ? { ...order.rider, _id: order.rider.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     // Riders
     riders: () => prisma.rider.findMany(),
     rider: async (_, { id }) => {
       if (!id) return null;
-      return prisma.rider.findUnique({ where: { id } });
+      const rider = await prisma.rider.findUnique({ where: { id } });
+      return rider ? { ...rider, _id: rider.id } : null;
     },
     riderOrders: async (_, __, context) => {
-      if (context.userId) {
-        return prisma.order.findMany({
-          where: { riderId: context.userId },
-          orderBy: { createdAt: 'desc' },
-          include: {
-            restaurant: true,
-            user: true
-          }
-        });
-      }
-      return [];
+      if (!context.userId) return [];
+      
+      const orders = await prisma.order.findMany({
+        where: { riderId: context.userId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          restaurant: true,
+          user: true
+        }
+      });
+      
+      return orders.map(order => ({
+        ...order,
+        _id: order.id,
+        restaurant: order.restaurant ? { ...order.restaurant, _id: order.restaurant.id } : null,
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      }));
     },
     
     // Others
@@ -1401,7 +1445,45 @@ const resolvers = {
     banners: async () => [],
     tips: async () => ({ _id: '1', tipVariations: [5, 10, 15, 20], enabled: true }),
     taxes: async () => [],
-    coupon: async () => null,
+    
+    // Coupon query
+    coupon: async (_, { coupon: code, restaurantId }) => {
+      const couponData = await prisma.coupon.findFirst({
+        where: {
+          code: code.toUpperCase(),
+          enabled: true,
+          OR: [
+            { restaurantId: null },
+            { restaurantId }
+          ]
+        }
+      });
+      
+      if (!couponData) {
+        return { coupon: null, message: "Coupon invalide ou expiré", success: false };
+      }
+      
+      // Vérifier validité temporelle
+      const now = new Date();
+      if (couponData.validFrom && now < couponData.validFrom) {
+        return { coupon: null, message: "Ce coupon n'est pas encore valide", success: false };
+      }
+      if (couponData.validUntil && now > couponData.validUntil) {
+        return { coupon: null, message: "Ce coupon a expiré", success: false };
+      }
+      
+      // Vérifier limite d'utilisation
+      if (couponData.usageLimit && couponData.usedCount >= couponData.usageLimit) {
+        return { coupon: null, message: "Ce coupon a atteint sa limite d'utilisation", success: false };
+      }
+      
+      return {
+        coupon: { ...couponData, _id: couponData.id },
+        message: "Coupon appliqué avec succès",
+        success: true
+      };
+    },
+    
     getVersions: async () => ({
       customerAppVersion: { android: '1.0.0', ios: '1.0.0' },
       riderAppVersion: '1.0.0',
@@ -1976,91 +2058,278 @@ const resolvers = {
     
     // =========== ORDERS ===========
     
+    // PlaceOrder complet avec validation et calcul de montant
     placeOrder: async (_, args, context) => {
-      const { restaurant, orderInput, paymentMethod, couponCode, tipping, taxationAmount, address, orderDate, isPickedUp, deliveryCharges, instructions } = args;
+      const { 
+        restaurant: restaurantId, 
+        orderInput, 
+        paymentMethod, 
+        couponCode, 
+        tipping = 0, 
+        taxationAmount = 0, 
+        address, 
+        orderDate, 
+        isPickedUp = false, 
+        deliveryCharges = 0, 
+        instructions 
+      } = args;
       
-      // Générer un orderId unique
-      const orderCount = await prisma.order.count();
-      const orderId = `ORD-${Date.now()}-${orderCount + 1}`;
+      console.log(`placeOrder: restaurant=${restaurantId}, items=${orderInput?.length}, coupon=${couponCode}`);
       
-      // Calculer le montant total
+      // Validation: vérifier que le restaurant existe
+      const restaurant = await prisma.restaurant.findUnique({
+        where: { id: restaurantId },
+        include: { categories: { include: { foods: true } } }
+      });
+      
+      if (!restaurant) {
+        throw new Error("Restaurant non trouvé");
+      }
+      
+      if (!restaurant.isActive || !restaurant.isAvailable) {
+        throw new Error("Ce restaurant n'est pas disponible actuellement");
+      }
+      
+      // Valider et calculer le montant des items
       let orderAmount = 0;
-      const items = orderInput.map(item => ({
-        ...item,
-        _id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      }));
+      const processedItems = [];
       
+      for (const item of orderInput) {
+        // Trouver le food item
+        let foodItem = null;
+        for (const cat of restaurant.categories) {
+          const found = cat.foods.find(f => f.id === item.food);
+          if (found) {
+            foodItem = found;
+            break;
+          }
+        }
+        
+        if (!foodItem) {
+          throw new Error(`Article non trouvé: ${item.food}`);
+        }
+        
+        if (foodItem.isOutOfStock) {
+          throw new Error(`Article en rupture de stock: ${foodItem.title}`);
+        }
+        
+        // Trouver la variation
+        const variation = foodItem.variations?.find(v => v.id === item.variation);
+        const itemPrice = variation ? variation.price : 0;
+        const discountedPrice = variation?.discounted || itemPrice;
+        
+        const itemTotal = discountedPrice * item.quantity;
+        orderAmount += itemTotal;
+        
+        processedItems.push({
+          _id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          food: item.food,
+          title: foodItem.title,
+          description: foodItem.description,
+          image: foodItem.image,
+          quantity: item.quantity,
+          variation: variation || null,
+          addons: item.addons || [],
+          specialInstructions: item.specialInstructions,
+          isActive: true
+        });
+      }
+      
+      // Vérifier le montant minimum
+      if (restaurant.minimumOrder && orderAmount < restaurant.minimumOrder) {
+        throw new Error(`Le montant minimum de commande est ${restaurant.minimumOrder}`);
+      }
+      
+      // Appliquer le coupon si fourni
+      let couponId = null;
+      let discountAmount = 0;
+      
+      if (couponCode) {
+        const coupon = await prisma.coupon.findFirst({
+          where: {
+            code: couponCode.toUpperCase(),
+            enabled: true,
+            OR: [
+              { restaurantId: null },
+              { restaurantId }
+            ]
+          }
+        });
+        
+        if (coupon) {
+          const now = new Date();
+          const isValid = 
+            (!coupon.validFrom || now >= coupon.validFrom) &&
+            (!coupon.validUntil || now <= coupon.validUntil) &&
+            (!coupon.usageLimit || coupon.usedCount < coupon.usageLimit) &&
+            (!coupon.minOrderAmount || orderAmount >= coupon.minOrderAmount);
+          
+          if (isValid) {
+            if (coupon.discountType === 'percentage') {
+              discountAmount = (orderAmount * coupon.discount) / 100;
+              if (coupon.maxDiscount) {
+                discountAmount = Math.min(discountAmount, coupon.maxDiscount);
+              }
+            } else {
+              discountAmount = coupon.discount;
+            }
+            
+            couponId = coupon.id;
+            
+            // Incrémenter le compteur d'utilisation
+            await prisma.coupon.update({
+              where: { id: coupon.id },
+              data: { usedCount: { increment: 1 } }
+            });
+          }
+        }
+      }
+      
+      // Calculer le total final
+      const finalAmount = orderAmount - discountAmount + tipping + taxationAmount + deliveryCharges;
+      
+      // Générer un orderId unique avec préfixe du restaurant
+      const orderCount = await prisma.order.count({ where: { restaurantId } });
+      const prefix = restaurant.orderPrefix || 'ORD';
+      const orderId = `${prefix}-${Date.now().toString(36).toUpperCase()}-${orderCount + 1}`;
+      
+      // Créer la commande
       const order = await prisma.order.create({
         data: {
           orderId,
-          restaurantId: restaurant,
-          userId: context.userId || 'anonymous',
-          items: items,
+          restaurantId,
+          userId: context.userId,
+          items: processedItems,
           deliveryAddress: address,
           paymentMethod,
+          orderAmount: finalAmount,
+          paidAmount: 0,
           tipping,
           taxationAmount,
           deliveryCharges,
+          discountAmount,
+          couponId,
           instructions,
-          orderDate: new Date(orderDate),
+          orderDate: orderDate ? new Date(orderDate) : new Date(),
+          expectedTime: new Date(Date.now() + (restaurant.deliveryTime || 30) * 60000),
           isPickedUp,
           orderStatus: 'PENDING',
-          paymentStatus: 'PENDING',
-          createdAt: new Date()
+          paymentStatus: paymentMethod === 'COD' ? 'PENDING' : 'PENDING',
+          isRinged: false,
+          isRiderRinged: false
         },
         include: {
           restaurant: true,
-          user: true
+          user: true,
+          coupon: true
         }
       });
       
-      // Envoyer notifications
+      // Envoyer notification au restaurant
       wsManager.sendNewOrderNotification(order);
       
-      return order;
+      console.log(`Order created: ${orderId}, amount: ${finalAmount}, discount: ${discountAmount}`);
+      
+      return {
+        ...order,
+        _id: order.id,
+        restaurant: { ...order.restaurant, _id: order.restaurant.id },
+        user: order.user ? { ...order.user, _id: order.user.id } : null
+      };
     },
     
     updateOrderStatus: async (_, { orderId, status }) => {
       const order = await prisma.order.update({
         where: { id: orderId },
-        data: { orderStatus: status }
+        data: { orderStatus: status },
+        include: { restaurant: true, user: true, rider: true }
       });
       
       wsManager.sendOrderStatusNotification(order, status);
       
-      return order;
+      return { ...order, _id: order.id };
     },
     
-    abortOrder: async (_, { id }) => {
-      return prisma.order.update({
+    abortOrder: async (_, { id }, context) => {
+      const order = await prisma.order.findUnique({ where: { id } });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      // Vérifier que l'utilisateur peut annuler
+      if (context.userId && order.userId !== context.userId) {
+        throw new Error("Non autorisé");
+      }
+      
+      // Ne peut annuler que si la commande est en attente
+      if (order.orderStatus !== 'PENDING') {
+        throw new Error("Cette commande ne peut plus être annulée");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id },
-        data: { orderStatus: 'CANCELLED' }
+        data: { 
+          orderStatus: 'CANCELLED',
+          cancelledAt: new Date()
+        },
+        include: { restaurant: true, user: true }
       });
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'CANCELLED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
     reviewOrder: async (_, { reviewInput }, context) => {
       const { order: orderId, rating, description } = reviewInput;
       
+      // Validation
+      if (rating < 1 || rating > 5) {
+        throw new Error("La note doit être entre 1 et 5");
+      }
+      
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        include: { restaurant: true }
+        include: { restaurant: true, review: true }
       });
       
       if (!order) {
         throw new Error("Commande non trouvée");
       }
       
+      if (order.review) {
+        throw new Error("Cette commande a déjà été évaluée");
+      }
+      
+      if (order.orderStatus !== 'DELIVERED') {
+        throw new Error("Vous ne pouvez évaluer qu'une commande livrée");
+      }
+      
+      // Créer l'avis
       await prisma.review.create({
         data: {
           rating,
-          description,
+          description: description?.trim() || null,
           orderId,
           restaurantId: order.restaurantId,
           userId: context.userId || order.userId
         }
       });
       
-      return prisma.order.findUnique({
+      // Recalculer la moyenne du restaurant
+      const reviews = await prisma.review.findMany({
+        where: { restaurantId: order.restaurantId }
+      });
+      
+      const avgRating = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
+      
+      await prisma.restaurant.update({
+        where: { id: order.restaurantId },
+        data: { reviewAverage: avgRating }
+      });
+      
+      const updatedOrder = await prisma.order.findUnique({
         where: { id: orderId },
         include: {
           restaurant: true,
@@ -2069,40 +2338,160 @@ const resolvers = {
           review: true
         }
       });
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
-    // Store mutations
-    acceptOrder: async (_, { _id, time }) => {
-      return prisma.order.update({
+    // =========== STORE MUTATIONS ===========
+    
+    acceptOrder: async (_, { _id, time }, context) => {
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { restaurant: true, user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      const preparationMinutes = time ? parseInt(time) : 20;
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'ACCEPTED',
-          preparationTime: time ? new Date(Date.now() + parseInt(time) * 60000) : null,
-          acceptedAt: new Date()
-        }
+          preparationTime: new Date(Date.now() + preparationMinutes * 60000),
+          expectedTime: new Date(Date.now() + (preparationMinutes + 15) * 60000),
+          acceptedAt: new Date(),
+          isRinged: true
+        },
+        include: { restaurant: true, user: true, rider: true }
       });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande acceptée",
+          message: `Votre commande #${order.orderId} a été acceptée. Temps de préparation: ${preparationMinutes} min`,
+          type: "ORDER_ACCEPTED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'ACCEPTED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
-    cancelOrder: async (_, { _id, reason }) => {
-      return prisma.order.update({
+    cancelOrder: async (_, { _id, reason }, context) => {
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      // Validation de la raison
+      if (!reason || reason.trim().length < 5) {
+        throw new Error("Veuillez fournir une raison valide pour l'annulation");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'CANCELLED',
-          reason,
-          cancelledAt: new Date()
-        }
+          reason: reason.trim(),
+          cancelledAt: new Date(),
+          isRinged: true
+        },
+        include: { restaurant: true, user: true, rider: true }
       });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande annulée",
+          message: `Votre commande #${order.orderId} a été annulée. Raison: ${reason}`,
+          type: "ORDER_CANCELLED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'CANCELLED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
     },
     
     orderPickedUp: async (_, { _id }) => {
-      return prisma.order.update({
+      const order = await prisma.order.findUnique({
+        where: { id: _id },
+        include: { user: true }
+      });
+      
+      if (!order) {
+        throw new Error("Commande non trouvée");
+      }
+      
+      const updatedOrder = await prisma.order.update({
         where: { id: _id },
         data: {
           orderStatus: 'PICKED',
           isPickedUp: true,
           pickedAt: new Date()
+        },
+        include: { restaurant: true, user: true, rider: true }
+      });
+      
+      // Notifier l'utilisateur
+      if (order.userId) {
+        wsManager.sendNotificationToUser(order.userId, {
+          title: "Commande récupérée",
+          message: `Votre commande #${order.orderId} a été récupérée par le livreur`,
+          type: "ORDER_PICKED"
+        });
+      }
+      
+      wsManager.sendOrderStatusNotification(updatedOrder, 'PICKED');
+      
+      return { ...updatedOrder, _id: updatedOrder.id };
+    },
+    
+    // Apply coupon mutation
+    applyCoupon: async (_, { coupon: code, restaurantId }) => {
+      const coupon = await prisma.coupon.findFirst({
+        where: {
+          code: code.toUpperCase().trim(),
+          enabled: true,
+          OR: [
+            { restaurantId: null },
+            { restaurantId }
+          ]
         }
       });
+      
+      if (!coupon) {
+        return { coupon: null, message: "Code coupon invalide", success: false };
+      }
+      
+      const now = new Date();
+      
+      if (coupon.validFrom && now < coupon.validFrom) {
+        return { coupon: null, message: "Ce coupon n'est pas encore actif", success: false };
+      }
+      
+      if (coupon.validUntil && now > coupon.validUntil) {
+        return { coupon: null, message: "Ce coupon a expiré", success: false };
+      }
+      
+      if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+        return { coupon: null, message: "Ce coupon a atteint sa limite d'utilisation", success: false };
+      }
+      
+      return {
+        coupon: { ...coupon, _id: coupon.id },
+        message: `Coupon appliqué: ${coupon.discountType === 'percentage' ? coupon.discount + '%' : coupon.discount + '€'} de réduction`,
+        success: true
+      };
     },
     
     muteRing: async (_, { orderId }) => {
