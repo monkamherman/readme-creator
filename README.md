@@ -24,7 +24,7 @@
 [![Étoiles](https://img.shields.io/github/stars/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution.svg)](https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution/stargazers)
 [![Forks](https://img.shields.io/github/forks/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution.svg)](https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution/network/members)
 ![Release GitHub (dernière par date)](https://img.shields.io/github/v/release/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution)
-[![Contributeurs GitHub](https://img.shields.io/github/contributors/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution)](https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution/graphs/contributors)
+
 [![Pull Requests Ouvertes](https://img.shields.io/github/issues-pr-raw/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution.svg)](https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution/pulls)
 [![Activité](https://img.shields.io/github/last-commit/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution.svg)](https://github.com/Ninjas-Code-official/Enatega-Multivendor-Food-Delivery-Solution/commits/main)
 [![Chaîne YouTube](https://img.shields.io/badge/Regardez_nous-Youtube-red)](https://www.youtube.com/@ninjascode509)
