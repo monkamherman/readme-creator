@@ -1,8 +1,15 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Smartphone, Store, Truck, Shield, Zap, Globe } from "lucide-react";
+import { ArrowRight, Smartphone, Store, Truck, Shield, Zap, Globe, LogIn, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuthContext } from "@/contexts/AuthContext";
 
 const Index = () => {
+  const { isAuthenticated, user, signOut } = useAuthContext();
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
@@ -19,7 +26,26 @@ const Index = () => {
               <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">Features</a>
               <a href="#apps" className="text-muted-foreground hover:text-foreground transition-colors">Apps</a>
               <a href="#docs" className="text-muted-foreground hover:text-foreground transition-colors">Documentation</a>
-              <Button variant="default">Get Started</Button>
+              
+              {isAuthenticated ? (
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-muted-foreground flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    {user?.email}
+                  </span>
+                  <Button variant="outline" onClick={handleSignOut} className="gap-2">
+                    <LogOut className="w-4 h-4" />
+                    Déconnexion
+                  </Button>
+                </div>
+              ) : (
+                <Link to="/auth">
+                  <Button variant="default" className="gap-2">
+                    <LogIn className="w-4 h-4" />
+                    Connexion
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </div>
