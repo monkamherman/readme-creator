@@ -1,6 +1,6 @@
 "use client";
 
-// Composants
+// Components
 import { PaddingContainer } from "@/lib/ui/useable-components/containers";
 import GoogleMapTrackingComponent from "@/lib/ui/screen-components/protected/order-tracking/components/gm-tracking-comp";
 import TrackingOrderDetails from "../../../../screen-components/protected/order-tracking/components/tracking-order-details";
@@ -8,10 +8,16 @@ import TrackingHelpCard from "../../../../screen-components/protected/order-trac
 import TrackingStatusCard from "@/lib/ui/screen-components/protected/order-tracking/components/tracking-status-card";
 import TrackingOrderDetailsDummy from "../../../../screen-components/protected/order-tracking/components/tracking-order-details-dummy";
 
+// New OrderTracker components
+import { OrderTracker } from "@/lib/ui/useable-components/order-tracker";
+import { OrderTrackerMap } from "@/lib/ui/useable-components/order-tracker/OrderTrackerMap";
+import { ChatContainer } from "@/lib/ui/useable-components/order-tracker/RealTimeChat";
+import { OrderNotificationProvider, useOrderStatusNotification } from "@/lib/ui/useable-components/order-tracker/OrderNotifications";
+
 // Services
 import useLocation from "@/lib/ui/screen-components/protected/order-tracking/services/useLocation";
 import useTracking from "@/lib/ui/screen-components/protected/order-tracking/services/useTracking";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useMutation, useQuery } from "@apollo/client";
 import { ADD_REVIEW_ORDER, GET_USER_PROFILE } from "@/lib/api/graphql";
 import useReviews from "@/lib/hooks/useReviews";
@@ -20,7 +26,7 @@ import useToast from "@/lib/hooks/useToast";
 import { RatingModal } from "@/lib/ui/screen-components/protected/profile";
 import { onUseLocalStorage } from "@/lib/utils/methods/local-storage";
 import ReactConfetti from "react-confetti";
-import ChatRider from "@/lib/ui/screen-components/protected/order-tracking/components/ChatRider";
+import { useTranslations } from "next-intl";
 
 interface IOrderTrackingScreenProps {
   orderId: string;
@@ -29,10 +35,14 @@ interface IOrderTrackingScreenProps {
 export default function OrderTrackingScreen({
   orderId,
 }: IOrderTrackingScreenProps) {
+  const t = useTranslations();
+  
   //states
   const [showRatingModal, setShowRatingModal] = useState<boolean>(false);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [showChat,setShowChat] = useState(false)
+  const [showChat, setShowChat] = useState(false);
+  const [useNewTracker, setUseNewTracker] = useState(true); // Toggle for new/old tracker
+  const [previousStatus, setPreviousStatus] = useState<string | null>(null);
 
   //Queries and Mutations
   const {
@@ -215,90 +225,205 @@ export default function OrderTrackingScreen({
     onInitDirectionCacheSet();
   }, [store_user_location_cache_key]);
 
-console.log("data ",mergedOrderDetails)
+  // Get location data for new tracker
+  const getRestaurantLocation = useCallback(() => {
+    if (!mergedOrderDetails?.restaurant?.location?.coordinates) {
+      return origin;
+    }
+    const coords = mergedOrderDetails.restaurant.location.coordinates;
+    return {
+      lng: parseFloat(coords[0]),
+      lat: parseFloat(coords[1]),
+    };
+  }, [mergedOrderDetails, origin]);
+
+  const getDeliveryLocation = useCallback(() => {
+    if (!mergedOrderDetails?.deliveryAddress?.location?.coordinates) {
+      return destination;
+    }
+    const coords = mergedOrderDetails.deliveryAddress.location.coordinates;
+    return {
+      lng: parseFloat(coords[0]),
+      lat: parseFloat(coords[1]),
+    };
+  }, [mergedOrderDetails, destination]);
+
+  // Handle status change for notifications
+  const handleStatusChange = useCallback((newStatus: string) => {
+    if (previousStatus && newStatus !== previousStatus) {
+      // Play notification sound and show browser notification
+      try {
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        const frequencies: Record<string, number> = {
+          ACCEPTED: 523.25,
+          ASSIGNED: 587.33,
+          PICKED: 659.25,
+          DELIVERED: 783.99,
+        };
+        
+        oscillator.frequency.value = frequencies[newStatus] || 440;
+        oscillator.type = "sine";
+        gainNode.gain.value = 0.1;
+        
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } catch (error) {
+        console.log("Audio not available");
+      }
+    }
+    setPreviousStatus(newStatus);
+  }, [previousStatus]);
+
+  console.log("data ", mergedOrderDetails);
+  
   return (
-    <>
-       {showConfetti && (
-        <>
-          <div
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              pointerEvents: "none",
-              zIndex: 10000,
-            }}
-          >
-            <ReactConfetti
-              width={window.innerWidth}
-              height={window.innerHeight}
-              recycle={false}
-              numberOfPieces={1000}
-              gravity={0.3}
-            />
-          </div>
-        </>
+    <OrderNotificationProvider>
+      {showConfetti && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            pointerEvents: "none",
+            zIndex: 10000,
+          }}
+        >
+          <ReactConfetti
+            width={window.innerWidth}
+            height={window.innerHeight}
+            recycle={false}
+            numberOfPieces={1000}
+            gravity={0.3}
+          />
+        </div>
       )}
+      
       <RatingModal
         visible={showRatingModal && !hasUserReview}
         onHide={() => setShowRatingModal(false)}
         order={orderTrackingDetails}
         onSubmitRating={handleSubmitRating}
       />
+      
       <div className="w-screen h-full flex flex-col pb-20 dark:bg-gray-900 dark:text-gray-100">
         <div className="scrollable-container flex-1">
-          {/* Google Map for Tracking */}
-          <GoogleMapTrackingComponent
-            isLoaded={isLoaded}
-            origin={origin}
-            destination={destination}
-            directions={directions}
-            isCheckingCache={isCheckingCache}
-            directionsCallback={directionsCallback}
-            orderStatus={mergedOrderDetails?.orderStatus || "PENDING"}
-            riderId={mergedOrderDetails?.rider?._id}
-          />
+          {/* New OrderTracker with Map */}
+          {useNewTracker ? (
+            <>
+              {/* Enhanced Map with real-time rider tracking */}
+              {isLoaded && mergedOrderDetails && (
+                <OrderTrackerMap
+                  isLoaded={isLoaded}
+                  restaurantLocation={getRestaurantLocation()}
+                  deliveryLocation={getDeliveryLocation()}
+                  orderStatus={mergedOrderDetails?.orderStatus || "PENDING"}
+                  riderId={mergedOrderDetails?.rider?._id}
+                  height="350px"
+                  className="rounded-none"
+                />
+              )}
 
-          {/* Main Content with increased gap from map */}
-          <div className="mt-8 md:mt-10">
-            <PaddingContainer>
-              {/* Status Card and Help Card in the same row */}
-              <div className="flex flex-col md:flex-row md:items-start items-center justify-between gap-6 mb-8">
-                {/* Order Status Card */}
-                {!isOrderTrackingDetailsLoading && mergedOrderDetails && (
-                  <TrackingStatusCard
-                    orderTrackingDetails={mergedOrderDetails}
-                  />
-                )}
+              {/* Main Content */}
+              <div className="mt-6 md:mt-8">
+                <PaddingContainer>
+                  {/* New OrderTracker Component */}
+                  {!isOrderTrackingDetailsLoading && mergedOrderDetails && (
+                    <OrderTracker
+                      orderId={orderId}
+                      orderStatus={mergedOrderDetails.orderStatus}
+                      riderId={mergedOrderDetails.rider?._id}
+                      restaurantLocation={getRestaurantLocation()}
+                      deliveryLocation={getDeliveryLocation()}
+                      restaurantName={mergedOrderDetails.restaurant?.name}
+                      estimatedTime={mergedOrderDetails.expectedTime}
+                      preparationTime={mergedOrderDetails.preparationTime}
+                      onStatusChange={handleStatusChange}
+                      className="mb-6"
+                    />
+                  )}
 
-                {/* Help Card - positioned on the left */}
-                <div className="md:ml-0 w-full md:w-auto md:flex-none">
-                  <TrackingHelpCard />
-                  {showChat   &&
-                  <ChatRider orderId={orderId}  customerId={profile?.profile._id}/>
+                  {/* Help Card */}
+                  <div className="mb-6">
+                    <TrackingHelpCard />
+                  </div>
 
-                  }
-                </div>
+                  {/* Order Details */}
+                  <div className="flex justify-center md:justify-start">
+                    {isOrderTrackingDetailsLoading ? (
+                      <TrackingOrderDetailsDummy />
+                    ) : (
+                      <TrackingOrderDetails
+                        orderTrackingDetails={mergedOrderDetails}
+                      />
+                    )}
+                  </div>
+                </PaddingContainer>
               </div>
+            </>
+          ) : (
+            <>
+              {/* Original Google Map */}
+              <GoogleMapTrackingComponent
+                isLoaded={isLoaded}
+                origin={origin}
+                destination={destination}
+                directions={directions}
+                isCheckingCache={isCheckingCache}
+                directionsCallback={directionsCallback}
+                orderStatus={mergedOrderDetails?.orderStatus || "PENDING"}
+                riderId={mergedOrderDetails?.rider?._id}
+              />
 
-              {/* Order Details - Full width to match status card */}
-              <div className="flex justify-center md:justify-start">
-                {isOrderTrackingDetailsLoading ?
-                  <TrackingOrderDetailsDummy />
-                : <TrackingOrderDetails
-                    orderTrackingDetails={mergedOrderDetails}
-                  />
-                }
+              {/* Original Content */}
+              <div className="mt-8 md:mt-10">
+                <PaddingContainer>
+                  <div className="flex flex-col md:flex-row md:items-start items-center justify-between gap-6 mb-8">
+                    {!isOrderTrackingDetailsLoading && mergedOrderDetails && (
+                      <TrackingStatusCard
+                        orderTrackingDetails={mergedOrderDetails}
+                      />
+                    )}
+                    <div className="md:ml-0 w-full md:w-auto md:flex-none">
+                      <TrackingHelpCard />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center md:justify-start">
+                    {isOrderTrackingDetailsLoading ? (
+                      <TrackingOrderDetailsDummy />
+                    ) : (
+                      <TrackingOrderDetails
+                        orderTrackingDetails={mergedOrderDetails}
+                      />
+                    )}
+                  </div>
+                </PaddingContainer>
               </div>
-            </PaddingContainer>
-          </div>
+            </>
+          )}
         </div>
       </div>
-    </>
+
+      {/* Floating Chat Button */}
+      {showChat && profile?.profile?._id && (
+        <ChatContainer
+          orderId={orderId}
+          currentUserId={profile.profile._id}
+          currentUserName={profile.profile.name}
+          enabled={showChat}
+        />
+      )}
+    </OrderNotificationProvider>
   );
 }

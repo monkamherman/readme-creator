@@ -9,3 +9,9 @@ export {
   NotificationBell,
   NotificationList,
 } from './OrderNotifications';
+export { 
+  RealTimeChat, 
+  FloatingChatButton, 
+  ChatContainer, 
+  default as RealTimeChatDefault 
+} from './RealTimeChat';
