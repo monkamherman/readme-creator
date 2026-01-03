@@ -14,16 +14,220 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      coupons: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          discount: number
+          enabled: boolean
+          id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          discount: number
+          enabled?: boolean
+          id?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          discount?: number
+          enabled?: boolean
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string | null
+          phone: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string | null
+          phone?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string | null
+          phone?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      rider_orders: {
+        Row: {
+          assigned_at: string
+          created_at: string
+          delivered_at: string | null
+          id: string
+          order_id: string
+          picked_up_at: string | null
+          rider_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_at?: string
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          order_id: string
+          picked_up_at?: string | null
+          rider_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_at?: string
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          order_id?: string
+          picked_up_at?: string | null
+          rider_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rider_orders_rider_id_fkey"
+            columns: ["rider_id"]
+            isOneToOne: false
+            referencedRelation: "riders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      riders: {
+        Row: {
+          available: boolean
+          created_at: string
+          id: string
+          is_active: boolean
+          latitude: number | null
+          longitude: number | null
+          name: string | null
+          notification_token: string | null
+          phone: string | null
+          time_zone: string
+          updated_at: string
+          user_id: string
+          username: string
+        }
+        Insert: {
+          available?: boolean
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          name?: string | null
+          notification_token?: string | null
+          phone?: string | null
+          time_zone?: string
+          updated_at?: string
+          user_id: string
+          username: string
+        }
+        Update: {
+          available?: boolean
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          name?: string | null
+          notification_token?: string | null
+          phone?: string | null
+          time_zone?: string
+          updated_at?: string
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      assign_order_to_rider: {
+        Args: { p_order_id: string; p_rider_id: string }
+        Returns: string
+      }
+      deliver_order: { Args: { p_assignment_id: string }; Returns: boolean }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      pickup_order: { Args: { p_assignment_id: string }; Returns: boolean }
+      rider_login: {
+        Args: {
+          p_notification_token?: string
+          p_time_zone?: string
+          p_user_id: string
+        }
+        Returns: {
+          available: boolean
+          rider_id: string
+          user_id: string
+          username: string
+        }[]
+      }
+      update_rider_location: {
+        Args: { p_latitude: number; p_longitude: number; p_rider_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "moderator" | "user" | "rider" | "store"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +354,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "moderator", "user", "rider", "store"],
+    },
   },
 } as const
