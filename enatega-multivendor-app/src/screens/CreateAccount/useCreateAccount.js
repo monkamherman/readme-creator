@@ -1,11 +1,13 @@
+// useCreateAccount.js - Expo Go Compatible Version
+
 import { useMutation } from '@apollo/client'
-import { GoogleSignin } from '@react-native-google-signin/google-signin'
 import { useNavigation } from '@react-navigation/native'
 import { useContext, useState } from 'react'
 import useEnvVars from '../../../environment'
 import { LOGIN_MUTATION } from '../../apollo/mutations'
 import ThemeContext from '../../ui/ThemeContext/ThemeContext'
 import { theme as Theme } from '../../utils/themeColors'
+import { useGoogleAuth } from '../../utils/googleAuth'
 
 const useCreateAccount = () => {
   const navigation = useNavigation()
@@ -13,6 +15,9 @@ const useCreateAccount = () => {
   const { GOOGLE_MAPS_KEY, ANDROID_CLIENT_ID_GOOGLE, IOS_CLIENT_ID_GOOGLE } = useEnvVars()
   const [loginButton, loginButtonSetter] = useState(null)
   const currentTheme = Theme[themeContext.ThemeValue]
+  
+  // Use the Expo Go compatible Google Auth hook
+  const { signInWithGoogle, isExpoGo } = useGoogleAuth()
 
   const [mutateLogin, { loading }] = useMutation(LOGIN_MUTATION)
 
@@ -24,14 +29,15 @@ const useCreateAccount = () => {
 
   const signIn = async () => {
     try {
-      await GoogleSignin.hasPlayServices()
-      const userInfo = await GoogleSignin.signIn()
-
+      loginButtonSetter('Google')
+      
+      const result = await signInWithGoogle()
+      
       const user = {
-        email: userInfo.user.email,
-        name: userInfo.user.name,
-        picture: userInfo.user.photo,
-        googleId: userInfo.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        picture: result.user.photo || '',
+        googleId: result.user.id,
         phone: '',
         password: '',
         type: 'google'
@@ -49,9 +55,15 @@ const useCreateAccount = () => {
         }
       })
 
-      loginButtonSetter('Google')
     } catch (error) {
       console.error('Google Sign-In Error:', error)
+      
+      if (error.code === 'SIGN_IN_CANCELLED') {
+        console.log('User cancelled sign-in')
+      } else {
+        console.error('Sign-in failed:', error.message)
+      }
+      
       loginButtonSetter(null)
     }
   }
@@ -66,7 +78,8 @@ const useCreateAccount = () => {
     mutateLogin,
     navigateToLogin,
     navigation,
-    signIn
+    signIn,
+    isExpoGo // Expose this to show a warning in UI if needed
   }
 }
 
