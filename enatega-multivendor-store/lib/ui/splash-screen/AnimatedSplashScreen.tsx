@@ -1,5 +1,15 @@
 // Expo
-import "expo-dev-client";
+// Conditionally import expo-dev-client only in development builds
+import Constants from "expo-constants";
+const isExpoGo = Constants.appOwnership === 'expo';
+if (!isExpoGo) {
+  try {
+    require("expo-dev-client");
+  } catch (e) {
+    // expo-dev-client not available
+  }
+}
+
 import * as SplashScreen from "expo-splash-screen";
 
 // Noyau
@@ -88,6 +98,7 @@ export default function AnimatedSplashScreen({
       );
     }
   }, [isAppReady, isSplashVideoComplete]);
+  
   return (
     <View style={{ flex: 1 }}>
       {isSplashAnimationComplete ? children : null}

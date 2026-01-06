@@ -1,4 +1,15 @@
-import "expo-dev-client";
+// Expo
+// Conditionally import expo-dev-client only in development builds
+import Constants from "expo-constants";
+const isExpoGo = Constants.appOwnership === 'expo';
+if (!isExpoGo) {
+  try {
+    require("expo-dev-client");
+  } catch (e) {
+    // expo-dev-client not available
+  }
+}
+
 import * as SplashScreen from "expo-splash-screen";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
@@ -11,7 +22,11 @@ import Animated, {
 } from "react-native-reanimated";
 import SplashVideo from "./SplashVideo";
 
-export default function AnimatedSplashScreen({ children }:any) {
+interface AnimatedSplashScreenProps {
+  children: React.ReactNode;
+}
+
+export default function AnimatedSplashScreen({ children }: AnimatedSplashScreenProps) {
   const opacityAnimation = useSharedValue(1); // Shared value for opacity
   const scaleAnimation = useSharedValue(1); // Shared value for scale
   const [isAppReady, setAppReady] = useState(false);
