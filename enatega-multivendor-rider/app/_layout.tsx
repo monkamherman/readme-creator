@@ -3,14 +3,13 @@ import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
-// import * as Sentry from "sentry-expo";
-import * as Sentry from "@sentry/react-native";
+import Constants from "expo-constants";
 
 import FlashMessage from "react-native-flash-message";
 
 // Service
 import setupApollo from "@/lib/apollo";
-import { initSentry } from "@/lib/utils/service";
+import { initSentry, wrap as sentryWrap } from "@/lib/utils/service/sentry";
 
 // Providers
 import { AuthProvider } from "@/lib/context/global/auth.context";
@@ -35,6 +34,10 @@ import { useEffect } from "react";
 
 import "../global.css";
 
+// Check if running in Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Initialize Sentry (will be skipped in Expo Go)
 initSentry();
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -60,11 +63,23 @@ function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded]);
-  ErrorUtils.setGlobalHandler((error, isFatal) => {
-    console.log("Global Error Caught:", { error, isFatal });
-  });
+  
+  // Global error handler
+  if (typeof ErrorUtils !== 'undefined') {
+    ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
+      console.log("Global Error Caught:", { error, isFatal });
+    });
+  }
+  
   useEffect(() => {
     grantCameraAndGalleryPermissions();
+  }, []);
+
+  // Show Expo Go warning in development
+  useEffect(() => {
+    if (isExpoGo) {
+      console.log('⚠️ Running in Expo Go - some native features may be limited');
+    }
   }, []);
 
   if (!loaded) {
@@ -99,4 +114,5 @@ function RootLayout() {
   );
 }
 
-export default Sentry.wrap(RootLayout);
+// Use Sentry wrap only in development builds
+export default sentryWrap(RootLayout);
