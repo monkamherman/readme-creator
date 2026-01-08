@@ -92,7 +92,7 @@
     "lottie-react-native": "7.2.2",
     "moment": "^2.29.1",
     "patch-package": "^8.0.0",
-    "react": "19.0.0",
+    "react": "19.2.3",
     "react-async-hook": "4.0.0",
     "react-dom": "19.2.3",
     "react-i18next": "^16.5.1",
