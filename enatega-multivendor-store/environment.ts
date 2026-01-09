@@ -1,56 +1,32 @@
 /*****************************
  * environment.ts
  * path: '/environment.ts' (root of store app)
+ * Uses shared backend configuration
  ******************************/
 
 import Constants from "expo-constants";
+import { getBackendUrls, getBackendEnvironment } from "../enatega-shared/config/backend.config";
 
 // Check if running in Expo Go
 const isExpoGo = Constants.appOwnership === 'expo';
 
-// Backend URLs configuration
-const BACKEND_CONFIG = {
-  // Local development
-  local: {
-    graphql: 'http://localhost:4000/graphql',
-    ws: 'ws://localhost:4000/graphql',
-  },
-  // LAN development (for physical devices - replace with your IP)
-  lan: {
-    graphql: 'http://192.168.1.100:4000/graphql',
-    ws: 'ws://192.168.1.100:4000/graphql',
-  },
-  // Production server
-  production: {
-    graphql: 'https://enatega-multivendor.up.railway.app/graphql',
-    ws: 'wss://enatega-multivendor.up.railway.app/graphql',
-  }
-};
-
-// Set your active backend here: 'local', 'lan', or 'production'
-const ACTIVE_BACKEND: keyof typeof BACKEND_CONFIG = 'local';
+// Environment variable for backend selection
+const BACKEND_ENV = process.env.EXPO_PUBLIC_BACKEND_ENV || process.env.BACKEND_ENV;
 
 const getEnvVars = () => {
-  // Determine which backend URLs to use based on environment
-  const isDev = __DEV__;
-  
-  const getBackendUrls = () => {
-    if (!isDev) {
-      return BACKEND_CONFIG.production;
-    }
-    return BACKEND_CONFIG[ACTIVE_BACKEND];
-  };
-
-  const backend = getBackendUrls();
+  // Get backend URLs from shared config
+  const backend = getBackendUrls(BACKEND_ENV, __DEV__);
+  const backendEnv = getBackendEnvironment(BACKEND_ENV, __DEV__);
 
   // Log Expo Go status
-  if (isExpoGo && isDev) {
-    console.log('ℹ️ Running in Expo Go - using backend:', ACTIVE_BACKEND);
+  if (isExpoGo && __DEV__) {
+    console.log(`🏪 Store App - Backend: ${backendEnv} (Expo Go)`);
   }
 
   return {
     GRAPHQL_URL: backend.graphql,
     WS_GRAPHQL_URL: backend.ws,
+    BACKEND_ENV: backendEnv,
   };
 };
 

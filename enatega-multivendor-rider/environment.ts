@@ -1,37 +1,20 @@
 /*****************************
  * environment.ts
  * path: '/environment.ts' (root of rider app)
+ * Uses shared backend configuration
  ******************************/
 
 import { loadDevMessages, loadErrorMessages } from "@apollo/client/dev";
 import { useContext } from "react";
 import { ConfigurationContext } from "./lib/context/global/configuration.context";
 import Constants from "expo-constants";
+import { getBackendUrls, getBackendEnvironment } from "../enatega-shared/config/backend.config";
 
 // Check if running in Expo Go
 const isExpoGo = Constants.appOwnership === 'expo';
 
-// Backend URLs configuration
-const BACKEND_CONFIG = {
-  // Local development
-  local: {
-    graphql: 'http://localhost:4000/graphql',
-    ws: 'ws://localhost:4000/graphql',
-  },
-  // LAN development (for physical devices - replace with your IP)
-  lan: {
-    graphql: 'http://192.168.1.100:4000/graphql',
-    ws: 'ws://192.168.1.100:4000/graphql',
-  },
-  // Production server
-  production: {
-    graphql: 'https://enatega-multivendor.up.railway.app/graphql',
-    ws: 'wss://enatega-multivendor.up.railway.app/graphql',
-  }
-};
-
-// Set your active backend here: 'local', 'lan', or 'production'
-const ACTIVE_BACKEND: keyof typeof BACKEND_CONFIG = 'local';
+// Environment variable for backend selection
+const BACKEND_ENV = process.env.EXPO_PUBLIC_BACKEND_ENV || process.env.BACKEND_ENV;
 
 const getEnvVars = () => {
   const configuration = useContext(ConfigurationContext);
@@ -41,24 +24,19 @@ const getEnvVars = () => {
     loadErrorMessages();
   }
 
-  // Determine which backend URLs to use
-  const getBackendUrls = () => {
-    if (!__DEV__) {
-      return BACKEND_CONFIG.production;
-    }
-    return BACKEND_CONFIG[ACTIVE_BACKEND];
-  };
-
-  const backend = getBackendUrls();
+  // Get backend URLs from shared config
+  const backend = getBackendUrls(BACKEND_ENV, __DEV__);
+  const backendEnv = getBackendEnvironment(BACKEND_ENV, __DEV__);
 
   // Log Expo Go status
   if (isExpoGo && __DEV__) {
-    console.log('ℹ️ Running in Expo Go - using backend:', ACTIVE_BACKEND);
+    console.log(`🏍️ Rider App - Backend: ${backendEnv} (Expo Go)`);
   }
 
   return {
     GRAPHQL_URL: backend.graphql,
     WS_GRAPHQL_URL: backend.ws,
+    BACKEND_ENV: backendEnv,
     SENTRY_DSN:
       configuration?.riderAppSentryUrl ??
       "https://e963731ba0f84e5d823a2bbe2968ea4d@o1103026.ingest.sentry.io/6135261",
