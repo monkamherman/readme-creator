@@ -1,51 +1,32 @@
 /*****************************
  * environment.js
  * path: '/environment.js' (root of your project)
+ * Uses shared backend configuration
  ******************************/
 
 import * as Updates from 'expo-updates'
 import { useContext } from 'react'
 import ConfigurationContext from './src/context/Configuration'
+import { getBackendUrls, getBackendEnvironment } from '../enatega-shared/config/backend.config'
 
-// Backend URLs configuration
-const BACKEND_CONFIG = {
-  // Local development
-  local: {
-    graphql: 'http://localhost:4000/graphql',
-    ws: 'ws://localhost:4000/graphql',
-    rest: 'http://localhost:4000/'
-  },
-  // LAN development (for physical devices - replace with your IP)
-  lan: {
-    graphql: 'http://192.168.1.100:4000/graphql',
-    ws: 'ws://192.168.1.100:4000/graphql',
-    rest: 'http://192.168.1.100/'
-  },
-  // Production server
-  production: {
-    graphql: 'https://aws-server.enatega.com/graphql',
-    ws: 'wss://aws-server.enatega.com/graphql',
-    rest: 'https://aws-server.enatega.com/'
-  }
-}
-
-// Set your active backend here: 'local', 'lan', or 'production'
-const ACTIVE_BACKEND = 'local'
+// Environment variable for backend selection (set in app.config.js or .env)
+// Options: 'local', 'lan', 'production'
+const BACKEND_ENV = process.env.EXPO_PUBLIC_BACKEND_ENV || process.env.BACKEND_ENV
 
 const useEnvVars = (env = Updates.channel) => {
   const configuration = useContext(ConfigurationContext)
   
-  // Determine which backend URLs to use
-  const getBackendUrls = () => {
-    // In production/staging channel, use production backend
-    if (env === 'production' || env === 'staging') {
-      return BACKEND_CONFIG.production
-    }
-    // Otherwise use the configured active backend
-    return BACKEND_CONFIG[ACTIVE_BACKEND] || BACKEND_CONFIG.local
+  // Determine if we're in development mode
+  const isDev = env !== 'production' && env !== 'staging'
+  
+  // Get backend URLs from shared config
+  const backend = getBackendUrls(BACKEND_ENV, isDev)
+  const backendEnv = getBackendEnvironment(BACKEND_ENV, isDev)
+  
+  // Log current backend in dev mode
+  if (__DEV__) {
+    console.log(`📱 Customer App - Backend: ${backendEnv}`)
   }
-
-  const backend = getBackendUrls()
 
   return {
     // Backend URLs
@@ -53,6 +34,9 @@ const useEnvVars = (env = Updates.channel) => {
     WS_GRAPHQL_URL: backend.ws,
     SERVER_URL: backend.graphql,
     SERVER_REST_URL: backend.rest,
+    
+    // Current environment info
+    BACKEND_ENV: backendEnv,
     
     // Google Auth Configuration
     IOS_CLIENT_ID_GOOGLE: configuration?.iOSClientID,
