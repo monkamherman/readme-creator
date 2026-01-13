@@ -30,7 +30,7 @@
     "chart.js": "^4.4.4",
     "emailjs": "^5.0.0",
     "emailjs-com": "^3.2.0",
-    "firebase": "^11.8.1",
+    "firebase": "^12.7.0",
     "formik": "^2.4.6",
     "framer-motion": "^12.9.1",
     "graphql": "^16.9.0",
